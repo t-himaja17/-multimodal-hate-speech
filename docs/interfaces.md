@@ -1,103 +1,52 @@
-# Module Interface Contract
-
-This document defines the interfaces between the major modules of the
-Sarcasm-Aware Transformer Fusion system.
-
-The interfaces are based on the project methodology. Where the methodology
-does not specify an exact implementation detail, the value is marked
-"TBD" and must be agreed before implementation.
-
 ````markdown
 # Module Interface Contract
 
-This document defines the technical interfaces between the major modules of
-the Multimodal Hate Speech Detection system with Sarcasm-Aware Transformer
-Fusion.
+This document defines the interfaces between the major modules of the Multimodal Hate Speech Detection — Sarcasm-Aware Transformer Fusion system.
 
-The methodology document is the primary source for this contract.
-
-Where the methodology specifies an exact model, dimension, loss, training
-setting, or architecture parameter, that specification is preserved here.
-
-Where the methodology does not specify an exact low-level implementation
-detail, it is marked as `TBD` and must be agreed upon by the team before
-implementation.
+The project methodology is the primary source of truth. Any implementation detail not explicitly specified by the methodology is marked as `TBD` and must be agreed upon by the team before implementation.
 
 ---
 
 # 1. End-to-End Pipeline
 
-```text
-Existing Benchmarks + Scraped Data
-                |
-                v
-        Dataset Construction
-                |
-                v
-     Deduplication + Annotation
-                |
-                v
-          OCR Processing
-                |
-                v
-       Data Augmentation
-       + Class Balancing
-                |
-                v
-      Multimodal Features
-        /             \
-       v               v
- Image Encoders    Text Encoders
- ViT-L/14          HateBERT
- CLIP              RoBERTa
-                   CLIP Text
-        \             /
-         \           /
-          v         v
-       Sarcasm Module
-             |
-             v
-    Sarcasm Gate Vector
-             |
-             v
-    Projection + Alignment
-             |
-             v
-   Cross-Modal Co-Attention
-             |
-             v
-      Fused Representation
-             |
-             v
-     Classification Heads
-       /       |        \
-      v        v         v
-    Hate     Target    Sarcasm
-             Group     Auxiliary
-             |
-             v
-      Predictions +
-      Explainability
+```
+Dataset Construction
+        ↓
+OCR + Text Processing
+        ↓
+Image Feature Extraction
+        ↓
+Text Feature Extraction
+        ↓
+Sarcasm-Aware Detection
+        ↓
+Projection & Alignment
+        ↓
+Cross-Modal Co-Attention
+        ↓
+Sarcasm Gating
+        ↓
+Classification Heads
+        ↓
+Predictions + Explainability
 ````
 
----
+The final system produces:
 
-# 2. Module Ownership
-
-| Module                                                   | Owner    | Main Location                                                    |
-| -------------------------------------------------------- | -------- | ---------------------------------------------------------------- |
-| Dataset loading, scraping support, OCR and preprocessing | Member 1 | `src/multimodal_hate/data/`                                      |
-| Image/text encoders and feature extraction               | Member 2 | `src/multimodal_hate/models/encoders/` and `features/`           |
-| Sarcasm-aware detection module                           | Member 3 | `src/multimodal_hate/models/sarcasm/`                            |
-| Fusion, training and evaluation                          | Member 4 | `src/multimodal_hate/models/fusion/`, `training/`, `evaluation/` |
+* Hate / Not-Hate prediction
+* Target-group prediction
+* Severity score
+* Explainability map
 
 ---
 
-# 3. Dataset Construction Interface
+# 2. Dataset Interface
 
-## Input
+## Dataset Sources
 
-Dataset sources may include:
+The methodology uses existing benchmarks together with newly scraped data.
+
+Existing datasets include:
 
 * Hateful Memes Challenge
 * MultiOFF
@@ -105,227 +54,73 @@ Dataset sources may include:
 * MUStARD
 * HateSPAN
 * MemeCap
+
+Additional data sources include:
+
 * Reddit
 * Twitter/X
 * Know Your Meme metadata
 
-The methodology combines existing benchmarks with scraped data.
-
-## Output
-
-Every dataset source must eventually be converted into a common logical
-sample representation.
-
-Recommended standardized record:
-
-```python
-{
-    "sample_id": str,
-    "image_path": str,
-    "post_title": str | None,
-    "template_caption": str | None,
-    "ocr_text": str,
-    "ocr_regions": list,
-    "hate_label": int | None,
-    "target_group": dict | None,
-    "sarcasm_label": int | None,
-    "incongruity_type": str | None,
-    "metadata": dict
-}
-```
-
-The exact fields available depend on the source dataset.
-
-## Dataset-specific information
-
-### Hateful Memes Challenge
-
-* Approximately 10,000 memes
-* Binary hate labels
-* Multimodal benchmark
-* Confounder sets
-
-### MultiOFF
-
-* Approximately 750 memes
-* Offensive / not-offensive labels
-* Image and overlaid-text information
-
-### iSarcasm + MUStARD
-
-* Sarcasm-labelled data
-* MUStARD provides multimodal sarcasm information
-* Only compatible text/image portions should be adapted for this project
-
-### HateSPAN + MemeCap
-
-* HateSPAN provides hateful span annotations
-* MemeCap provides rich captions for semantic grounding
-
-### Reddit
-
-The methodology specifies PRAW scraping from:
-
-* `r/dankmemes`
-* `r/PoliticalHumor`
-* `r/ComedyCemetery`
-* `r/ControversialHumor`
-
-Image posts are retained and the post title is used as meme caption context.
-
-### Twitter/X + Know Your Meme
-
-Twitter/X is used for collecting meme-related posts and Know Your Meme
-metadata is used for meme-template visual grounding.
-
----
-
-# 4. Scraping Interface
-
-## Input
-
-```text
-Platform/API credentials
-Target communities
-Keyword/hashtag seeds
-Target-group terminology
-```
-
 ## Processing
 
-The methodology specifies:
+The dataset pipeline includes:
 
-1. Keyword and hashtag seeding
+1. Dataset collection
 2. Image filtering
 3. Perceptual-hash deduplication
 4. Meme-template filtering
 5. OCR extraction
-6. Annotation
-7. Class balancing and augmentation
+6. Dual annotation
+7. Class balancing
+8. Data augmentation
 
-## Output
+## Annotation
 
-```python
-{
-    "sample_id": str,
-    "image_path": str,
-    "post_title": str | None,
-    "source": str,
-    "metadata": dict
-}
+Each annotated sample contains:
+
+```text
+hate / not-hate
+target group
+sarcasm / irony flag
+incongruity type
 ```
 
-## Important processing details
+Incongruity types include:
+
+```text
+visual-text conflict
+hyperbole
+exaggeration
+```
 
 The methodology specifies:
 
-* pHash deduplication with a 95% similarity threshold
-* Meme filtering using a ResNet-50 classifier fine-tuned on KYM
-* EasyOCR + TrOCR ensemble
-* OCR bounding boxes
-* OCR region information
-* OCR confidence scores
+```text
+3 annotators
+majority voting
+MTurk / Label Studio
+Cohen's kappa >= 0.70
+```
 
----
+## Output
 
-# 5. Annotation Interface
-
-## Input
+The data module must provide a standardized sample containing:
 
 ```text
-Processed meme image
+sample ID
+image
 OCR text
-Post/title context
+OCR regions
+post title / caption context
+labels
+metadata
 ```
 
-## Annotation outputs
-
-The methodology specifies annotation for:
-
-```text
-1. Hate / Not-Hate
-2. Target group
-3. Sarcasm / irony flag
-4. Incongruity type
-```
-
-Possible incongruity categories include:
-
-```text
-- Visual-text conflict
-- Hyperbole
-- Exaggeration
-```
-
-## Annotation protocol
-
-The methodology specifies:
-
-* 3 annotators
-* Majority voting
-* MTurk / Label Studio
-* Cohen's kappa >= 0.70 threshold
-
-## Output
-
-```python
-{
-    "hate_label": int,
-    "target_group": dict,
-    "sarcasm_label": int,
-    "incongruity_type": str
-}
-```
+Exact serialization format: TBD.
 
 ---
 
-# 6. Data Augmentation and Class Balancing Interface
-
-## Input
-
-```text
-Annotated training samples
-```
-
-## Class balancing
-
-The methodology specifies:
-
-```text
-SMOTE on feature embeddings
-```
-
-for minority-class balancing.
-
-## Image augmentation
-
-The methodology specifies:
-
-```text
-Horizontal flip
-Colour jitter
-Text-region masking
-```
-
-## Text augmentation
-
-The methodology specifies:
-
-```text
-Back-translation:
-English -> German -> English
-using MarianMT
-```
-
-## Output
-
-```text
-Balanced and augmented training dataset
-```
-
----
-
-# 7. OCR Interface
+# 3. OCR Interface
 
 ## Input
 
@@ -341,27 +136,20 @@ EasyOCR
 TrOCR
 ```
 
-The methodology specifies an EasyOCR + TrOCR ensemble.
+## OCR Information
 
-## Output
+The system stores:
 
-```python
-{
-    "text": str,
-    "regions": [
-        {
-            "text": str,
-            "bbox": [x1, y1, x2, y2],
-            "region": str,
-            "confidence": float
-        }
-    ]
-}
+```text
+OCR text
+bounding boxes
+font / region information
+confidence scores
 ```
 
-## Region tags
+## Positional Tags
 
-The methodology introduces:
+OCR text is represented using:
 
 ```text
 [TOP]
@@ -369,23 +157,96 @@ The methodology introduces:
 [CAPTION]
 ```
 
-These positional tags are preserved as part of structured OCR processing.
-
-## Location
+## Output
 
 ```text
-src/multimodal_hate/data/processing/
+OCR text
++
+OCR bounding boxes
++
+region labels
++
+confidence scores
 ```
 
-## Owner
+## Additional Processing
 
+The text pipeline handles:
+
+* code-switching
+* internet slang
+* emoji → text conversion
+* abbreviations
+* post title
+* KYM template description
+
+Location:
+
+```text
+src/multimodal_hate/data/
+```
+
+Owner:
+
+```text
 Member 1
+```
 
 ---
 
-# 8. Image Encoder Interface
+# 4. Data Augmentation Interface
 
-## 8.1 ViT-L/14
+## Input
+
+```text
+Annotated training samples
+```
+
+## Image Augmentation
+
+```text
+horizontal flip
+colour jitter
+text-region masking
+```
+
+## Text Augmentation
+
+```text
+English → German → English
+```
+
+using MarianMT.
+
+## Class Balancing
+
+```text
+SMOTE on feature embeddings
+```
+
+## Output
+
+```text
+Balanced and augmented training samples
+```
+
+Location:
+
+```text
+src/multimodal_hate/data/
+```
+
+Owner:
+
+```text
+Member 1
+```
+
+---
+
+# 5. Image Feature Extraction Interface
+
+## 5.1 ViT-L/14
 
 ### Input
 
@@ -393,52 +254,34 @@ Member 1
 Preprocessed meme image
 ```
 
-### Processing
+### Model
 
-Vision Transformer with 14 x 14 patches.
+```text
+ViT-L/14
+```
 
 ### Output
-
-The methodology specifies:
 
 ```text
 [CLS] token + patch embeddings
 1024-dimensional representation
 ```
 
-Logical representation:
+Logical interface:
 
 ```text
 [B, N_img, 1024]
 ```
 
-where:
-
-```text
-B      = batch size
-N_img  = number of image tokens
-1024   = feature dimension
-```
-
-The exact value of `N_img` depends on image preprocessing and is therefore:
-
-```text
-N_img = TBD
-```
-
-### Location
-
-```text
-src/multimodal_hate/models/encoders/
-```
-
-### Owner
-
-Member 2
-
 ---
 
-# 9. CLIP Visual Encoder Interface
+# 6. CLIP Visual Encoder Interface
+
+## Input
+
+```text
+Preprocessed meme image
+```
 
 ## Model
 
@@ -447,134 +290,54 @@ CLIP Visual Encoder
 ViT-B/32
 ```
 
-## Input
-
-```text
-Preprocessed meme image
-```
-
 ## Output
 
 ```text
 512-dimensional image embedding
 ```
 
-Logical batch representation:
+Logical interface:
 
 ```text
 [B, 512]
 ```
 
-The embedding is used for:
-
-* Cross-modal similarity
-* Visual-text incongruity
-* Contrastive alignment
-
-### Location
-
-```text
-src/multimodal_hate/models/encoders/
-```
-
-### Owner
-
-Member 2
-
 ---
 
-# 10. Supplementary Visual Feature Interface
+# 7. Supplementary Visual Features
 
-The methodology includes supplementary visual features.
-
-## Object detection
+The methodology specifies:
 
 ```text
 YOLOv8
 ```
 
-Used for object bounding boxes such as:
+for object bounding boxes such as:
 
 ```text
-Weapons
-Symbols
-Other relevant objects
+weapons
+symbols
 ```
 
-## Face / emotion information
-
-The methodology specifies:
+It also specifies:
 
 ```text
 ArcFace / DeepFace
 ```
 
-for facial/emotion-related information.
+for facial emotion recognition.
 
-## Output
-
-```text
-Auxiliary visual feature vector
-```
-
-The exact dimensionality is:
+The exact combined supplementary feature dimension is:
 
 ```text
 TBD
 ```
 
-because the methodology does not specify a fixed final dimension.
-
-### Location
-
-```text
-src/multimodal_hate/models/features/
-```
-
-### Owner
-
-Member 2
-
 ---
 
-# 11. Spatial Attention / Visual Explainability Interface
+# 8. Text Feature Extraction Interface
 
-The methodology specifies learnable spatial attention over image patch tokens.
-
-## Input
-
-```text
-ViT patch embeddings
-Cross-modal attention information
-```
-
-## Output
-
-```text
-Spatial attention weights
-```
-
-These weights highlight visually relevant regions and support:
-
-```text
-GradCAM explainability
-```
-
-### Location
-
-```text
-src/multimodal_hate/models/features/
-```
-
-### Owner
-
-Member 2
-
----
-
-# 12. Text Encoder Interface
-
-## 12.1 HateBERT
+## 8.1 HateBERT
 
 ### Model
 
@@ -585,55 +348,30 @@ BERT fine-tuned on RAL-E
 
 ### Input
 
-Structured OCR text and contextual text.
-
-The input may include:
-
 ```text
-[TOP] text
-[BOTTOM] text
-[CAPTION] text
-KYM template description
-Post/title context
+Structured OCR text
++
+template caption / metadata
 ```
 
 ### Output
 
-The methodology specifies:
-
 ```text
-[CLS] = 768 dimensions
+[CLS] representation
+768 dimensions
 ```
 
-Logical representation:
+Logical interface:
 
 ```text
 [B, N_txt, 768]
 ```
 
-where:
-
-```text
-B      = batch size
-N_txt  = number of text tokens
-768    = hidden dimension
-```
-
-### Location
-
-```text
-src/multimodal_hate/models/encoders/
-```
-
-### Owner
-
-Member 2
-
 ---
 
-# 13. RoBERTa + CLIP Text Interface
+# 9. Secondary Text Encoders
 
-The methodology also specifies:
+The methodology specifies:
 
 ```text
 RoBERTa-large
@@ -641,104 +379,27 @@ RoBERTa-large
 CLIP Text Encoder
 ```
 
-## RoBERTa
+RoBERTa provides robust linguistic representations.
 
-Used for robust linguistic representations.
+CLIP Text Encoder produces text embeddings in the shared image-text space.
 
-The exact final representation used in fusion is:
-
-```text
-TBD
-```
-
-unless explicitly selected during implementation.
-
-## CLIP Text Encoder
-
-Used to produce language embeddings in the shared image-text space.
-
-### Output
+CLIP text output:
 
 ```text
-CLIP text embedding
-512 dimensions
+512-dimensional embedding
 ```
 
-Logical representation:
+Logical interface:
 
 ```text
 [B, 512]
 ```
 
-This is used for:
-
-* Visual-text similarity
-* Incongruity detection
-* Contrastive alignment
-
-### Location
-
-```text
-src/multimodal_hate/models/encoders/
-```
-
-### Owner
-
-Member 2
-
 ---
 
-# 14. Structured OCR Text Processing Interface
-
-## Input
-
-```text
-Raw OCR regions
-Post/title context
-KYM template metadata
-```
-
-## Processing
+# 10. Handcrafted Linguistic Features
 
 The methodology specifies:
-
-```text
-[TOP]
-[BOTTOM]
-[CAPTION]
-```
-
-region tags.
-
-Additional processing includes:
-
-* Code-switching handling
-* Internet slang handling
-* Emoji-to-text conversion
-* Abbreviation handling
-* KYM template-description concatenation
-
-## Output
-
-```text
-Structured text sequence
-```
-
-### Location
-
-```text
-src/multimodal_hate/data/processing/
-```
-
-### Owner
-
-Member 1
-
----
-
-# 15. Handcrafted Linguistic Feature Interface
-
-The methodology specifies the following auxiliary features:
 
 ```text
 Slur presence
@@ -748,7 +409,7 @@ Punctuation density
 LIWC sentiment categories
 ```
 
-The slur lexicon includes HateXplain-derived terminology.
+The slur lexicon is based on HateXplain.
 
 ## Output
 
@@ -756,37 +417,65 @@ The slur lexicon includes HateXplain-derived terminology.
 64-dimensional feature appendage
 ```
 
-This is concatenated with the transformer `[CLS]` representation.
-
-Therefore:
+Logical interface:
 
 ```text
 [B, 64]
 ```
 
-for the handcrafted feature vector.
-
-### Location
+Location:
 
 ```text
 src/multimodal_hate/models/features/
 ```
 
-### Owner
+Owner:
 
+```text
 Member 2
+```
 
 ---
 
-# 16. Sarcasm Encoder Interface
+# 11. Sarcasm Module
+
+The sarcasm module combines:
+
+```text
+Textual sarcasm
+Visual-text incongruity
+Sentiment reversal
+```
+
+and produces a learned sarcasm gate.
+
+Location:
+
+```text
+src/multimodal_hate/models/sarcasm/
+```
+
+Owner:
+
+```text
+Member 3
+```
+
+---
+
+# 12. Sarcasm Encoder
 
 ## Model
 
 ```text
 SarcasmBERT
-BERT fine-tuned on:
-- iSarcasm
-- SARC 2.0
+```
+
+Fine-tuned on:
+
+```text
+iSarcasm
+SARC 2.0
 ```
 
 ## Input
@@ -799,33 +488,23 @@ template caption
 
 ## Output
 
-```python
-{
-    "sarcasm_probability": float,
-    "span_markers": list
-}
-```
-
-The methodology specifies that the module identifies textual sarcasm cues
-such as:
-
-* Hyperbole
-* Irony markers
-* Negated sentiment
-
-### Location
-
 ```text
-src/multimodal_hate/models/sarcasm/
+sarcasm probability
++
+span markers
 ```
-
-### Owner
-
-Member 3
 
 ---
 
-# 17. Visual-Text Incongruity Interface
+# 13. Visual-Text Incongruity Interface
+
+## Input
+
+```text
+CLIP image embedding
++
+CLIP text embedding
+```
 
 ## Method
 
@@ -835,50 +514,15 @@ CLIP cosine similarity
 learned incongruity head
 ```
 
-## Input
-
-```text
-CLIP image embedding
-[B, 512]
-
-CLIP text embedding
-[B, 512]
-```
-
 ## Output
 
 ```text
-Incongruity score
+Incongruity score ∈ [0, 1]
 ```
-
-with:
-
-```text
-0 <= score <= 1
-```
-
-Logical representation:
-
-```text
-[B, 1]
-```
-
-The incongruity score represents semantic mismatch between visual content
-and text.
-
-### Location
-
-```text
-src/multimodal_hate/models/sarcasm/
-```
-
-### Owner
-
-Member 3
 
 ---
 
-# 18. Sentiment Reversal Interface
+# 14. Sentiment Reversal Interface
 
 ## Method
 
@@ -890,11 +534,11 @@ BERT sentiment
 
 ## Input
 
-Text regions are evaluated separately:
+Text regions:
 
 ```text
-TOP region
-BOTTOM region
+TOP
+BOTTOM
 ```
 
 ## Output
@@ -903,141 +547,73 @@ BOTTOM region
 Polarity flip indicator
 ```
 
-Logical representation:
-
-```text
-[B, 1]
-```
-
-The purpose is to detect patterns such as:
-
-```text
-positive textual sentiment
-+
-negative visual/contextual meaning
-```
-
-### Location
-
-```text
-src/multimodal_hate/models/sarcasm/
-```
-
-### Owner
-
-Member 3
-
 ---
 
-# 19. Sarcasm Gate Interface
+# 15. Sarcasm Gate Interface
 
-The sarcasm gate combines:
+## Input
 
 ```text
 SarcasmBERT output
 +
 Visual-text incongruity
 +
-Sentiment reversal
+Sentiment reversal information
 ```
-
-## Input
-
-Logical combined sarcasm feature representation:
-
-```text
-[B, D_sarc]
-```
-
-where:
-
-```text
-D_sarc = TBD
-```
-
-because the methodology does not specify the exact concatenated dimension
-before the MLP.
 
 ## Processing
 
 ```text
 Concatenation
-      |
-      v
+      ↓
 MLP
-      |
-      v
+      ↓
 Sigmoid gating
 ```
 
 ## Output
 
-The methodology specifies:
-
 ```text
-Gate vector g ∈ R^d
+Sarcasm gate vector g ∈ R^d
 ```
 
-The exact `d` is not explicitly specified.
-
-Therefore:
+The exact dimension `d` is:
 
 ```text
-g = [B, d]
-d = TBD
+TBD
 ```
-
-### Location
-
-```text
-src/multimodal_hate/models/sarcasm/
-```
-
-### Owner
-
-Member 3
 
 ---
 
-# 20. Projection and Alignment Interface
+# 16. Projection and Alignment Interface
 
-The fusion system projects image and text representations into:
+The shared fusion dimension is:
 
 ```text
 d_fuse = 512
 ```
 
-## Image projection
-
-### Input
+## Image Projection
 
 ```text
+Input:
 [B, N_img, 1024]
-```
 
-### Output
-
-```text
+Output:
 [B, N_img, 512]
 ```
 
-## Text projection
-
-### Input
+## Text Projection
 
 ```text
+Input:
 [B, N_txt, 768]
-```
 
-### Output
-
-```text
+Output:
 [B, N_txt, 512]
 ```
 
-## Processing
-
-The methodology specifies:
+Processing:
 
 ```text
 Linear projection
@@ -1047,183 +623,131 @@ LayerNorm
 learnable modality type embeddings
 ```
 
-Modality tokens:
+Modality embeddings:
 
 ```text
 IMG_TOKEN
 TXT_TOKEN
 ```
 
-### Location
+Location:
 
 ```text
 src/multimodal_hate/models/fusion/
 ```
 
-### Owner
+Owner:
 
+```text
 Member 4
+```
 
 ---
 
-# 21. Sarcasm-Conditioned Positional Bias Interface
+# 17. Sarcasm-Conditioned Attention Bias
 
-The sarcasm gate is used to influence cross-modal attention.
+The methodology specifies adding the sarcasm gate as an additive bias to cross-attention logits.
 
-## Input
-
-```text
-Sarcasm gate vector g
-```
-
-## Processing
-
-The methodology specifies:
+Conceptually:
 
 ```text
-Add g as an additive bias to cross-attention logits
+attention_logits'
+=
+attention_logits
++
+sarcasm_bias(g)
 ```
 
-High sarcasm/incongruity should increase the importance of relevant
-image-text interaction.
-
-## Output
-
-```text
-Sarcasm-conditioned attention logits
-```
-
-Exact implementation shape:
+The exact broadcasting/projection implementation is:
 
 ```text
 TBD
 ```
 
-because the methodology describes the operation but does not specify every
-low-level broadcasting detail.
-
-### Location
-
-```text
-src/multimodal_hate/models/fusion/
-```
-
-### Owner
-
-Member 4
-
 ---
 
-# 22. Cross-Modal Co-Attention Interface
+# 18. Cross-Modal Co-Attention
 
-## Architecture
-
-The methodology specifies:
+## Number of Layers
 
 ```text
-4 cross-modal co-attention layers
+4
 ```
 
-Each layer contains:
+## Attention Heads
 
 ```text
-Image -> Text Cross-Attention
-Text -> Image Cross-Attention
-Self-Attention within fused stream
+8
 ```
 
-## Attention settings
+## Dropout
 
 ```text
-Number of layers = 4
-Attention heads = 8
-Dropout = 0.1
+0.1
 ```
 
-## Input
+Components:
 
 ```text
-Image tokens:
-[B, N_img, 512]
-
-Text tokens:
-[B, N_txt, 512]
-
-Sarcasm-conditioned attention bias
+Image → Text Cross-Attention
+Text → Image Cross-Attention
+Self-Attention within Fused Stream
 ```
 
-## Processing
-
-### Image -> Text
+## Image → Text
 
 Image tokens attend to text tokens.
 
-### Text -> Image
+## Text → Image
 
 Text tokens attend to image patches.
 
-### Self-Attention
+## Fused Self-Attention
 
-The concatenated:
+The concatenated sequence:
 
 ```text
 [IMG ; TXT]
 ```
 
-sequence attends to itself.
+attends to itself.
 
 ## Output
 
 ```text
-Fused token sequence
-[B, N_fused, 512]
+Fused multimodal representation
 ```
 
-where:
-
-```text
-N_fused = N_img + N_txt
-```
-
-subject to the exact implementation.
-
-### Location
+Location:
 
 ```text
 src/multimodal_hate/models/fusion/
 ```
 
-### Owner
+Owner:
 
+```text
 Member 4
+```
 
 ---
 
-# 23. Sarcasm Gating of Fused Representation
+# 19. Sarcasm Gating of Fused Representation
 
-The methodology specifies element-wise gating:
-
-```text
-h_fused' = h_fused ⊙ σ(W · g + b)
-```
-
-## Input
+The methodology specifies:
 
 ```text
-Fused representation
-+
-Sarcasm gate vector
+h_fused' =
+h_fused ⊙ σ(W · g + b)
 ```
 
 ## Processing
 
 ```text
 Linear layer
-      |
-      v
+      ↓
 Sigmoid
-      |
-      v
+      ↓
 Element-wise multiplication
 ```
 
@@ -1233,34 +757,9 @@ Element-wise multiplication
 Sarcasm-conditioned fused representation
 ```
 
-The feature dimension remains:
-
-```text
-512
-```
-
-for the shared fusion dimension.
-
-The exact pooling operation from the fused token sequence to the final
-classification representation is:
-
-```text
-TBD
-```
-
-### Location
-
-```text
-src/multimodal_hate/models/fusion/
-```
-
-### Owner
-
-Member 4
-
 ---
 
-# 24. Contrastive Alignment Interface
+# 20. Contrastive Alignment Interface
 
 ## Method
 
@@ -1270,113 +769,52 @@ NT-Xent loss
 
 ## Input
 
-Matched image-text pairs:
-
 ```text
 CLIP image embedding
-[B, 512]
-
++
 CLIP text embedding
-[B, 512]
 ```
 
-## Processing
-
-Contrastive learning encourages matching image-text pairs to be aligned
-while separating mismatched pairs.
+The positive pair consists of the image and text belonging to the same meme.
 
 ## Output
 
 ```text
-contrastive_loss: scalar
+contrastive loss
 ```
-
-## Loss weight
-
-```text
-lambda_2 = 0.1
-```
-
-The methodology specifies that the contrastive loss is applied to CLIP
-embedding pairs before fusion.
-
-### Location
-
-```text
-src/multimodal_hate/training/
-```
-
-### Owner
-
-Member 4
 
 ---
 
-# 25. Hate Classification Head
+# 21. Classification Heads
 
-## Input
+## 21.1 Hate / Not-Hate
 
-```text
-Final fused representation
-```
-
-Shared fusion dimension:
-
-```text
-512
-```
-
-## Architecture
+Architecture:
 
 ```text
 2-layer MLP
-    |
-    v
+↓
 Softmax
 ```
 
-## Output
+Output:
 
 ```text
-Hate / Not-Hate
+Hate
+Not-Hate
 ```
 
-Logical class probabilities:
-
-```text
-[B, 2]
-```
-
-Classes:
-
-```text
-0 = Not-Hate
-1 = Hate
-```
-
-## Loss
+Loss:
 
 ```text
 BCE
 ```
 
-Optional class weights may be used for imbalance.
-
-### Location
-
-```text
-src/multimodal_hate/models/fusion/
-```
-
-### Owner
-
-Member 4
-
 ---
 
-# 26. Target Group Classification Head
+# 22. Target Group Head
 
-The methodology specifies separate sigmoid heads for:
+Separate sigmoid heads are used for:
 
 ```text
 Race
@@ -1386,47 +824,21 @@ Disability
 Sexuality
 ```
 
-## Input
-
-```text
-Final fused representation
-```
-
-## Output
-
-Logical multi-label representation:
-
-```text
-[B, 5]
-```
-
-Each output represents the probability of the corresponding target group.
-
-## Activation
+Activation:
 
 ```text
 Sigmoid
 ```
 
-## Loss
+Loss:
 
 ```text
 Multi-label BCE
 ```
 
-### Location
-
-```text
-src/multimodal_hate/models/fusion/
-```
-
-### Owner
-
-Member 4
-
 ---
 
-# 27. Sarcasm Auxiliary Head
+# 23. Sarcasm Auxiliary Head
 
 ## Input
 
@@ -1437,13 +849,7 @@ Sarcasm gate intermediate features
 ## Output
 
 ```text
-Sarcasm probability
-```
-
-Logical representation:
-
-```text
-[B, 1]
+Binary sarcasm prediction
 ```
 
 ## Loss
@@ -1452,127 +858,70 @@ Logical representation:
 BCE
 ```
 
-## Loss weight
+## Loss Weight
 
 ```text
-lambda_1 = 0.3
+λ₁ = 0.3
 ```
-
-The auxiliary head is jointly trained with the main hate classification task.
-
-### Location
-
-```text
-src/multimodal_hate/models/fusion/
-```
-
-### Owner
-
-Member 4
 
 ---
 
-# 28. Severity Score Interface
+# 24. Severity Score
 
 The methodology lists severity score as a final system output.
 
-However, the methodology does not provide a complete specification for:
-
-* Severity labels
-* Number of severity classes
-* Severity head architecture
-* Severity loss
-* Severity output dimension
-
-Therefore this interface is:
+However, it does not specify the exact:
 
 ```text
-Severity score = TBD
+severity labels
+severity head architecture
+severity output dimension
+severity loss
 ```
 
-The team must finalize this before implementing a severity prediction head.
+Therefore:
 
-Do not invent a severity architecture without team agreement.
+```text
+Severity implementation = TBD
+```
 
 ---
 
-# 29. Total Loss Interface
-
-The methodology specifies:
+# 25. Total Loss
 
 ```text
 L_total =
-    L_hate
-    + lambda_1 * L_sarcasm
-    + lambda_2 * L_contrastive
-    + lambda_3 * L_target
-```
-
-where:
-
-```text
-lambda_1 = 0.3
-lambda_2 = 0.1
-lambda_3 = 0.2
-```
-
-## Components
-
-```text
 L_hate
-    = BCE
-
-L_sarcasm
-    = BCE
-
-L_contrastive
-    = NT-Xent
-
-L_target
-    = multi-label BCE
++
+λ₁ L_sarcasm
++
+λ₂ L_contrastive
++
+λ₃ L_target
 ```
 
-The methodology specifies that the loss weights are tuned through grid search
-on the validation set.
-
-## Output
+Weights:
 
 ```text
-total_loss: scalar
+λ₁ = 0.3
+λ₂ = 0.1
+λ₃ = 0.2
 ```
 
-### Location
+Losses:
 
 ```text
-src/multimodal_hate/training/
+L_hate        = BCE
+L_sarcasm     = BCE
+L_contrastive = NT-Xent
+L_target      = Multi-label BCE
 ```
-
-### Owner
-
-Member 4
 
 ---
 
-# 30. Training Interface
+# 26. Training Interface
 
-## Input
-
-```text
-Processed dataset
-Model configuration
-Training configuration
-```
-
-## Framework
-
-```text
-PyTorch
-HuggingFace Transformers
-```
-
-## Training phases
-
-### Phase 1 — Modality-Specific Pretraining
+## Phase 1 — Modality-Specific Pretraining
 
 Freeze:
 
@@ -1595,9 +944,7 @@ Epochs = 5
 Learning rate = 1e-4
 ```
 
----
-
-### Phase 2 — Fusion Module Training
+## Phase 2 — Fusion Module Training
 
 Unfreeze:
 
@@ -1612,12 +959,6 @@ Cross-attention fusion
 Sarcasm gate
 ```
 
-Dataset:
-
-```text
-Existing + scraped data
-```
-
 Settings:
 
 ```text
@@ -1626,11 +967,9 @@ Warmup scheduler
 Gradient clipping = 1.0
 ```
 
----
+## Phase 3 — End-to-End Fine-Tuning + Adversarial Debiasing
 
-### Phase 3 — End-to-End Fine-Tuning + Adversarial Debiasing
-
-Train:
+Fine-tune:
 
 ```text
 Full model
@@ -1642,10 +981,7 @@ Add:
 Adversarial classifier
 ```
 
-The adversarial classifier operates against protected attributes /
-annotator-identity proxies.
-
-Use:
+Method:
 
 ```text
 DANN-style adversarial loss
@@ -1659,9 +995,7 @@ Final learning rate:
 
 ---
 
-# 31. Training Infrastructure Interface
-
-The methodology specifies:
+# 27. Training Infrastructure
 
 ```text
 PyTorch
@@ -1669,34 +1003,17 @@ HuggingFace Transformers
 Batch size = 32
 Gradient accumulation = 4
 Mixed precision = fp16
-GPU = A100 / V100
+A100 / V100 GPU
 Weights & Biases logging
 Early stopping patience = 5
-K-fold cross-validation = 5
+K-fold cross-validation K = 5
 ```
-
-These values belong in:
-
-```text
-configs/training.yaml
-```
-
-and should not be hard-coded inside model modules.
 
 ---
 
-# 32. Evaluation Interface
+# 28. Evaluation Interface
 
-## Input
-
-```text
-Ground-truth labels
-Model predictions
-Prediction probabilities
-Explainability outputs
-```
-
-## Required metrics
+Metrics:
 
 ```text
 AUROC
@@ -1707,59 +1024,23 @@ Cohen's Kappa
 GradCAM IoU
 ```
 
-## Metric descriptions
-
-### AUROC
-
-Primary metric for the Hateful Memes benchmark.
-
-### Macro F1
-
-Used to account for class imbalance between hate and not-hate.
-
-### Balanced Accuracy
-
-Average of per-class recall/accuracy.
-
-### False Positive Rate
-
-Important for avoiding benign sarcastic samples being incorrectly flagged
-as hate.
-
-### Cohen's Kappa
-
-Used for agreement analysis associated with sarcasm labelling.
-
-### GradCAM IoU
-
-Measures alignment between model attention maps and annotated hateful
-regions.
-
-### Location
+Location:
 
 ```text
 src/multimodal_hate/evaluation/
 ```
 
-### Owner
+Owner:
 
+```text
 Member 4
+```
 
 ---
 
-# 33. Explainability Interface
+# 29. Explainability Interface
 
-## Input
-
-```text
-Trained model
-Meme image
-Prediction
-```
-
-## Method
-
-The methodology specifies:
+Methods:
 
 ```text
 GradCAM
@@ -1767,427 +1048,246 @@ Spatial attention
 Cross-modal attention
 ```
 
-## Output
+Output:
 
 ```text
 Explainability map
 ```
 
-The map should indicate visually relevant regions associated with the
-prediction.
-
-The exact implementation details of GradCAM extraction are:
+The exact GradCAM implementation layer is:
 
 ```text
 TBD
 ```
 
-until the target ViT/fusion layer is selected.
+---
 
-### Location
+# 30. Ablation Interface
 
-```text
-artifacts/explainability/
-```
+The methodology specifies:
 
-and implementation:
+### A. Without sarcasm module
 
 ```text
-src/multimodal_hate/evaluation/
+Baseline fusion only
 ```
 
-### Owner
+### B. Without cross-attention
 
-Member 4
+```text
+Concatenation fusion
+```
+
+### C. Without contrastive loss
+
+```text
+Direct classification
+```
+
+### D. Text-only
+
+```text
+HateBERT
+```
+
+### E. Image-only
+
+```text
+ViT + hate head
+```
+
+### F. Without OCR text
+
+```text
+Image + post-title only
+```
 
 ---
 
-# 34. Inference Interface
+# 31. Inference Interface
 
 ## Input
 
 ```text
 Meme image
-Optional post/title context
++
+optional post-title/context
 ```
 
 ## Processing
 
 ```text
 Image
-   |
-   v
+  ↓
 OCR
-   |
-   v
-Structured text
-   |
-   +------------------+
-   |                  |
-   v                  v
-Image Encoders    Text Encoders
-   |                  |
-   +--------+---------+
-            |
-            v
-      Sarcasm Module
-            |
-            v
-      Sarcasm Gate
-            |
-            v
-     Projection Layer
-            |
-            v
-   Cross-Modal Fusion
-            |
-            v
-    Classification Heads
-            |
-            v
-       Predictions
+  ↓
+Structured OCR Text
+  ↓
+Image + Text Encoders
+  ↓
+Sarcasm Module
+  ↓
+Projection & Alignment
+  ↓
+Cross-Modal Co-Attention
+  ↓
+Sarcasm Gating
+  ↓
+Classification Heads
+  ↓
+Prediction + Explainability
 ```
 
 ## Output
 
-Logical prediction object:
-
-```python
-{
-    "hate_probability": float,
-    "hate_label": int,
-    "target_probabilities": list,
-    "sarcasm_probability": float,
-    "severity_score": float | None,
-    "explainability": dict
-}
+```text
+Hate / Not-Hate
+Target Group
+Severity Score
+Sarcasm Score
+Explainability Map
 ```
 
-Severity is optional until the severity head is formally specified.
+Exact serialized inference output:
 
-### Location
+```text
+TBD
+```
+
+Location:
 
 ```text
 src/multimodal_hate/inference/
 ```
 
-### Owner
-
-Member 4
-
 ---
 
-# 35. Ablation Interface
-
-The methodology specifies the following ablation experiments.
-
-## A. Without sarcasm module
-
-```text
-Baseline fusion only
-```
-
-## B. Without cross-attention
-
-```text
-Concatenation fusion
-```
-
-## C. Without contrastive loss
-
-```text
-Direct classification
-```
-
-## D. Text-only
-
-```text
-HateBERT
-```
-
-## E. Image-only
-
-```text
-ViT + hate head
-```
-
-## F. Without OCR text
-
-```text
-Image + post-title only
-```
-
-Each ablation must use the same evaluation protocol as the main model.
-
-### Location
-
-```text
-experiments/ablations/
-```
-
-### Owner
-
-Member 4
-
----
-
-# 36. Public Function Interfaces
-
-The following public function names are recommended for stable module
-boundaries.
-
-These names are implementation contracts and may be changed only by team
-agreement.
+# 32. Public Module Interfaces
 
 ## Member 1 — Data
 
 ```python
 load_dataset(...)
-```
-
-```python
 prepare_sample(...)
-```
-
-```python
 run_ocr(...)
-```
-
-```python
 build_dataset_record(...)
-```
-
-```python
 create_data_splits(...)
 ```
-
----
 
 ## Member 2 — Encoders
 
 ```python
 encode_image_vit(...)
-```
-
-```python
 encode_image_clip(...)
-```
-
-```python
 encode_text_hatebert(...)
-```
-
-```python
 encode_text_clip(...)
-```
-
-```python
 encode_text_roberta(...)
-```
-
-```python
 extract_linguistic_features(...)
 ```
-
----
 
 ## Member 3 — Sarcasm
 
 ```python
 predict_sarcasm(...)
-```
-
-```python
 compute_incongruity(...)
-```
-
-```python
 detect_sentiment_reversal(...)
-```
-
-```python
 compute_sarcasm_gate(...)
 ```
 
----
-
-## Member 4 — Fusion
+## Member 4 — Fusion / Training / Evaluation
 
 ```python
 project_modalities(...)
-```
-
-```python
 cross_modal_fusion(...)
-```
-
-```python
 apply_sarcasm_gate(...)
-```
-
-```python
 compute_total_loss(...)
-```
-
-```python
 train_one_step(...)
-```
-
-```python
 evaluate_model(...)
-```
-
-```python
 run_inference(...)
 ```
 
 ---
 
-# 37. Tensor Shape Contract
+# 33. Tensor Interface Summary
 
-The following dimensions are explicitly supported by the methodology.
-
-## Image
+## ViT
 
 ```text
-ViT-L/14:
 [B, N_img, 1024]
 ```
 
-## Text
+## HateBERT
 
 ```text
-HateBERT:
 [B, N_txt, 768]
 ```
 
-## CLIP image
+## CLIP Image
 
 ```text
 [B, 512]
 ```
 
-## CLIP text
+## CLIP Text
 
 ```text
 [B, 512]
 ```
 
-## Handcrafted linguistic features
+## Handcrafted Features
 
 ```text
 [B, 64]
 ```
 
-## Projected image tokens
+## Projected Image
 
 ```text
 [B, N_img, 512]
 ```
 
-## Projected text tokens
+## Projected Text
 
 ```text
 [B, N_txt, 512]
 ```
 
-## Fused token sequence
+## Fusion Dimension
 
 ```text
-[B, N_fused, 512]
+512
+```
+
+## Sarcasm Gate
+
+```text
+[B, d]
 ```
 
 where:
 
 ```text
-N_fused = N_img + N_txt
+d = TBD
 ```
-
-## Hate prediction
-
-```text
-[B, 2]
-```
-
-## Target-group prediction
-
-```text
-[B, 5]
-```
-
-## Sarcasm probability
-
-```text
-[B, 1]
-```
-
-## Important TBD dimensions
-
-```text
-N_img
-N_txt
-D_sarc
-severity output dimension
-final pooled representation implementation
-supplementary visual feature dimension
-```
-
-These must not be silently changed.
 
 ---
 
-# 38. Interface Rules for All Members
+# 34. Team Dependency Contract
 
-1. Never silently change a shared tensor dimension.
-2. Never change another member's public function signature without agreement.
-3. Every public module must document its input and output shapes.
-4. Use batch-first tensor conventions.
-5. Do not hard-code dataset paths.
-6. Dataset paths belong in configuration files.
-7. Model hyperparameters belong in configuration files.
-8. API keys must never be committed.
-9. Large datasets must not be committed directly to Git.
-10. Model checkpoints must not be committed directly to Git unless explicitly
-    approved and handled through the project's large-file strategy.
-11. Add tests for every major module.
-12. Use dummy tensors to test module interfaces before upstream modules are
-    complete.
-13. If an upstream module is incomplete, use a mock/stub with the agreed
-    interface.
-14. Do not modify another member's module without communicating the change.
-15. Changes to this interface document require team agreement.
-16. Any methodology parameter marked `TBD` must be resolved before it is
-    required by another module.
-17. Configuration values must not be duplicated across Python files.
-18. Every experiment must record its configuration and results.
-19. All experiments must be reproducible from a known configuration.
-20. The `main` branch represents the stable integrated version.
-
----
-
-# 39. Team Dependency Rules
-
-## Member 1 -> Member 2
+## Member 1 → Member 2
 
 Member 1 provides:
 
 ```text
-Image path
-Structured OCR text
+Image
+OCR text
 OCR regions
-Post/title context
+Post title / caption
 Dataset labels
 Metadata
 ```
 
-Member 2 must not depend on the internal implementation of Member 1's
-scraper or OCR code.
-
-Member 2 only depends on the standardized data record.
-
----
-
-## Member 2 -> Member 3
+## Member 2 → Member 3
 
 Member 2 provides:
 
@@ -2197,19 +1297,13 @@ CLIP text embedding
 Structured text representation
 ```
 
-Member 3 uses these through documented interfaces.
-
-Member 3 must not directly modify encoder internals.
-
----
-
-## Member 2 + Member 3 -> Member 4
+## Member 2 + Member 3 → Member 4
 
 Member 2 provides:
 
 ```text
-Projected image features
-Projected text features
+Image features
+Text features
 CLIP image embedding
 CLIP text embedding
 ```
@@ -2219,237 +1313,67 @@ Member 3 provides:
 ```text
 Sarcasm probability
 Incongruity score
-Sentiment reversal information
-Sarcasm gate vector
-```
-
-Member 4 consumes these interfaces.
-
----
-
-# 40. What Members Must NOT Modify
-
-## Member 1 must NOT modify
-
-```text
-src/multimodal_hate/models/fusion/
-src/multimodal_hate/training/
-src/multimodal_hate/evaluation/
-```
-
-without team agreement.
-
-## Member 2 must NOT modify
-
-```text
-src/multimodal_hate/models/sarcasm/
-src/multimodal_hate/models/fusion/
-```
-
-without team agreement.
-
-## Member 3 must NOT modify
-
-```text
-src/multimodal_hate/models/encoders/
-src/multimodal_hate/models/fusion/
-```
-
-without team agreement.
-
-## Member 4 must NOT modify
-
-the internal data collection or encoder implementations without agreement.
-
-Member 4 consumes their documented outputs.
-
----
-
-# 41. TBD Decisions Requiring Team Agreement
-
-The following items are not fully specified by the methodology and must
-therefore be explicitly decided before implementation:
-
-* Exact tokenizer maximum sequence lengths
-* Exact image preprocessing resolution
-* Exact `N_img`
-* Exact `N_txt`
-* Exact sarcasm gate dimension `d`
-* Exact RoBERTa representation used downstream
-* Exact supplementary visual-feature dimension
-* Exact pooling operation after fusion
-* Exact severity-score architecture
-* Exact severity labels
-* Exact severity loss
-* Exact DANN loss formulation and weighting
-* Exact protected/annotator proxy attributes
-* Exact train/validation/test split for each dataset
-* Exact mapping of heterogeneous dataset labels
-* Exact missing-label handling
-* Exact checkpoint naming/versioning convention
-
-No member should independently invent one of these values.
-
-Once decided, the value must be added to:
-
-```text
-docs/interfaces.md
-```
-
-and the relevant configuration file.
-
----
-
-# 42. Configuration Ownership
-
-Configuration values must live in:
-
-```text
-configs/
-├── base.yaml
-├── dataset.yaml
-├── model.yaml
-├── training.yaml
-├── evaluation.yaml
-└── experiments/
-```
-
-Examples:
-
-```text
-dataset.yaml
-    dataset paths
-    split settings
-    preprocessing
-
-model.yaml
-    encoder names
-    fusion dimension
-    attention layers
-    attention heads
-    dropout
-
-training.yaml
-    learning rates
-    batch size
-    epochs
-    loss weights
-    scheduler
-    gradient clipping
-
-evaluation.yaml
-    metrics
-    cross-validation
-    explainability settings
+Sentiment reversal
+Sarcasm gate
 ```
 
 ---
 
-# 43. Final Interface Summary
+# 35. Interface Rules
 
-```text
-                  MEMBER 1
-        DATA + OCR + PREPROCESSING
-                    |
-                    | standardized sample
-                    v
-                  MEMBER 2
-          IMAGE / TEXT ENCODERS
-                    |
-       +------------+------------+
-       |                         |
-       | embeddings              | features
-       v                         v
-                  MEMBER 3
-             SARCASM MODULE
-                    |
-                    | sarcasm gate
-                    v
-                  MEMBER 4
-       PROJECTION + CROSS-ATTENTION
-                    |
-                    v
-             SELF-ATTENTION
-                    |
-                    v
-          SARCASM-CONDITIONED
-             FUSED FEATURES
-                    |
-          +---------+---------+
-          |         |         |
-          v         v         v
-        HATE      TARGET    SARCASM
-        HEAD       HEAD      HEAD
-          |         |         |
-          +---------+---------+
-                    |
-                    v
-       PREDICTIONS + EXPLAINABILITY
-```
+1. Do not silently change a tensor dimension.
+2. Do not silently change a public function signature.
+3. Document every public input and output.
+4. Use configuration files for dataset paths.
+5. Use configuration files for model hyperparameters.
+6. Do not hard-code API keys or secrets.
+7. Do not commit datasets directly to Git.
+8. Do not commit large model checkpoints directly to Git.
+9. Add tests for major modules.
+10. Test module interfaces using dummy inputs before full integration.
+11. Changes to shared interfaces require team agreement.
+12. Methodology parameters must not be changed silently.
+13. Every experiment must record its configuration.
+14. Every experiment must record its results.
+15. `main` represents the stable integrated implementation.
 
 ---
 
-# 44. Definition of Interface Stability
-
-An interface is considered stable when:
-
-* Input field names are agreed.
-* Output field names are agreed.
-* Tensor dimensions are documented.
-* Data types are documented.
-* Public function names are documented.
-* Unit tests exist.
-* A dummy input successfully passes through the module.
-* Downstream members can use the output without accessing internal code.
-
-Until these conditions are met, the interface should be considered:
+# 36. TBD Items
 
 ```text
-IN DEVELOPMENT
+Exact tokenizer maximum length
+Exact image preprocessing resolution
+Exact N_img
+Exact N_txt
+Exact sarcasm gate dimension d
+Exact RoBERTa output used downstream
+Exact supplementary visual-feature dimension
+Exact final fusion pooling operation
+Exact severity labels
+Exact severity head
+Exact severity loss
+Exact DANN loss weighting
+Exact protected-attribute proxy representation
+Exact heterogeneous-label mapping
+Exact missing-label handling
+Exact train/validation/test split strategy
 ```
 
-After team approval:
-
-```text
-STABLE
-```
+These values must be agreed upon by the team before they become required interfaces.
 
 ---
 
-# 45. Source-of-Truth Rule
+# 37. Source-of-Truth Rule
 
-The project methodology document is the primary research source.
-
-This interface document translates the methodology into software contracts.
-
-If a conflict exists:
+The project methodology is the primary source of truth.
 
 ```text
 Project Methodology
-        >
-docs/interfaces.md
-        >
+        ↓
+Module Interface Contract
+        ↓
 Implementation
 ```
+If an implementation intentionally deviates from the methodology, the deviation must be documented and approved by the team.
 
-Any implementation change that intentionally deviates from the methodology
-must be documented and approved by the team.
-
-````
-
-This version is safer than the earlier one because it **doesn't pretend the methodology specifies details that it doesn't**. For example, the source explicitly specifies the 512-dimensional shared fusion space, four co-attention layers, eight heads, and 0.1 dropout, so those are fixed here. :contentReference[oaicite:3]{index=3} It also explicitly specifies the sarcasm components and their outputs, including SarcasmBERT, CLIP incongruity, VADER+BERT sentiment reversal, and the sigmoid gate. :contentReference[oaicite:4]{index=4}
-
-The training phases, learning rates, infrastructure, and evaluation metrics are also preserved from the methodology rather than invented. :contentReference[oaicite:5]{index=5} :contentReference[oaicite:6]{index=6}
-
-### What to do now
-
-1. Open `docs/interfaces.md` → **Edit**.
-2. **Delete the current 31 lines completely.**
-3. Paste the entire block above.
-4. Click **Preview** and check that the headings/tables/code blocks render properly.
-5. **Don't commit yet** if anything looks wrong.
-6. If it renders correctly, commit with:
-
-```text
-Complete module interface contract
-````
