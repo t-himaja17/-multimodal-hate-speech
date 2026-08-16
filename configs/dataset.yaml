@@ -1,1 +1,48 @@
+dataset:
+  name: multimodal_hate_speech
 
+  sources:
+    - hateful_memes
+    - multioff
+    - isarcasm
+    - mustard
+    - hatespan
+    - memecap
+
+  additional_sources:
+    - reddit
+    - twitter_x
+    - know_your_meme
+
+  preprocessing:
+    ocr:
+      enabled: true
+      engines:
+        - easyocr
+        - trocr
+
+    deduplication:
+      enabled: true
+      method: perceptual_hash
+
+    meme_template_filtering:
+      enabled: true
+
+  augmentation:
+    image:
+      horizontal_flip: true
+      color_jitter: true
+      text_region_masking: true
+
+    text:
+      back_translation: true
+      language: german
+
+  balancing:
+    enabled: true
+    method: smote
+
+  annotation:
+    annotators: 3
+    majority_voting: true
+    minimum_cohen_kappa: 0.70
