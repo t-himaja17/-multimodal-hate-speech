@@ -1,6 +1,11 @@
-Yes. I re-checked the **actual methodology file** before rewriting this. The previous version I gave you was too generic in a few places. This version keeps the methodology's specific details—ViT-L/14, CLIP ViT-B/32, HateBERT, RoBERTa, 64-d handcrafted features, 512-d fusion, 4 co-attention layers, 8 heads, dropout 0.1, sarcasm components, loss weights, 3 training phases, evaluation metrics, and ablations.   
+# Module Interface Contract
 
-**Important:** Copy everything inside the code block and replace the current contents of `docs/interfaces.md` with it.
+This document defines the interfaces between the major modules of the
+Sarcasm-Aware Transformer Fusion system.
+
+The interfaces are based on the project methodology. Where the methodology
+does not specify an exact implementation detail, the value is marked
+"TBD" and must be agreed before implementation.
 
 ````markdown
 # Module Interface Contract
