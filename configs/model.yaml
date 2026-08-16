@@ -1,1 +1,43 @@
+model:
 
+  image:
+    vit:
+      name: ViT-L/14
+      output_dim: 1024
+
+    clip:
+      name: ViT-B/32
+      output_dim: 512
+
+  text:
+    hatebert:
+      name: HateBERT
+      output_dim: 768
+
+    roberta:
+      name: RoBERTa-large
+
+    clip:
+      output_dim: 512
+
+  linguistic_features:
+    dimension: 64
+
+  fusion:
+    dimension: 512
+    layers: 4
+    attention_heads: 8
+    dropout: 0.1
+
+  sarcasm:
+    gate_dimension: TBD
+
+  classification:
+    hate_classes: 2
+
+    target_groups:
+      - race
+      - religion
+      - gender
+      - disability
+      - sexuality
