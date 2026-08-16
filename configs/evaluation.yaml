@@ -1,1 +1,22 @@
+evaluation:
 
+  metrics:
+    - AUROC
+    - Macro_F1
+    - Balanced_Accuracy
+    - False_Positive_Rate
+    - Cohen_Kappa
+    - GradCAM_IoU
+
+  explainability:
+    gradcam: true
+    spatial_attention: true
+    cross_modal_attention: true
+
+  ablations:
+    - without_sarcasm
+    - without_cross_attention
+    - without_contrastive_loss
+    - text_only
+    - image_only
+    - without_ocr
