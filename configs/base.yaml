@@ -1,1 +1,15 @@
+project:
+  name: multimodal-hate-speech
+  seed: 42
 
+paths:
+  data_dir: data
+  raw_data: data/raw
+  processed_data: data/processed
+  splits: data/splits
+  artifacts: artifacts
+  experiments: experiments
+
+reproducibility:
+  seed: 42
+  deterministic: true
