@@ -16,6 +16,7 @@ def test_load_hateful_memes(tmp_path):
         "img": "img/123.png",
         "text": "example text",
         "label": 1,
+        "target_group": "example_group",
     }
 
     with annotation_file.open("w", encoding="utf-8") as f:
@@ -35,3 +36,4 @@ def test_load_hateful_memes(tmp_path):
     assert sample.text == "example text"
     assert sample.hate_label == 1
     assert sample.image_path is not None
+    assert sample.metadata["target_group"] == "example_group"
