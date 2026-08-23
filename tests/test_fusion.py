@@ -15,41 +15,34 @@ from multimodal_hate.models.fusion.fusion_transformer import (
     SarcasmAwareFusionTransformer,
 )
 
+from multimodal_hate.models.classification.heads import (
+    ClassificationHead,
+    HateClassificationHead,
+    SarcasmClassificationHead,
+    TargetGroupClassificationHead,
+    MultitaskClassificationHeads,
+)
+
 
 # ============================================================
 # PROJECTION TESTS
 # ============================================================
 
 def test_image_projection_shape():
-    """1024-dimensional image tokens should become 512-dimensional."""
-    module = ModalityProjection(
-        input_dim=1024,
-        fusion_dim=512,
-    )
-
+    module = ModalityProjection(input_dim=1024, fusion_dim=512)
     x = torch.randn(2, 257, 1024)
-
     output = module(x)
-
     assert output.shape == (2, 257, 512)
 
 
 def test_text_projection_shape():
-    """768-dimensional text tokens should become 512-dimensional."""
-    module = ModalityProjection(
-        input_dim=768,
-        fusion_dim=512,
-    )
-
+    module = ModalityProjection(input_dim=768, fusion_dim=512)
     x = torch.randn(2, 128, 768)
-
     output = module(x)
-
     assert output.shape == (2, 128, 512)
 
 
 def test_projection_alignment_shapes():
-    """Image and text should both enter the shared 512-D fusion space."""
     module = ProjectionAlignment(
         image_input_dim=1024,
         text_input_dim=768,
@@ -59,17 +52,13 @@ def test_projection_alignment_shapes():
     image = torch.randn(4, 257, 1024)
     text = torch.randn(4, 128, 768)
 
-    projected_image, projected_text = module(
-        image,
-        text,
-    )
+    projected_image, projected_text = module(image, text)
 
     assert projected_image.shape == (4, 257, 512)
     assert projected_text.shape == (4, 128, 512)
 
 
 def test_projection_alignment_supports_different_sequence_lengths():
-    """N_img and N_txt must remain independently variable."""
     module = ProjectionAlignment(
         image_input_dim=1024,
         text_input_dim=768,
@@ -79,17 +68,13 @@ def test_projection_alignment_supports_different_sequence_lengths():
     image = torch.randn(2, 10, 1024)
     text = torch.randn(2, 37, 768)
 
-    projected_image, projected_text = module(
-        image,
-        text,
-    )
+    projected_image, projected_text = module(image, text)
 
     assert projected_image.shape == (2, 10, 512)
     assert projected_text.shape == (2, 37, 512)
 
 
 def test_modality_embeddings_are_learnable():
-    """IMG_TOKEN and TXT_TOKEN must be trainable parameters."""
     module = ProjectionAlignment(
         image_input_dim=1024,
         text_input_dim=768,
@@ -98,51 +83,32 @@ def test_modality_embeddings_are_learnable():
 
     assert isinstance(module.img_token, torch.nn.Parameter)
     assert isinstance(module.txt_token, torch.nn.Parameter)
-
     assert module.img_token.requires_grad
     assert module.txt_token.requires_grad
 
 
 def test_projection_gradients_flow():
-    """Gradients must flow through both projection branches."""
     module = ProjectionAlignment(
         image_input_dim=1024,
         text_input_dim=768,
         fusion_dim=512,
     )
 
-    image = torch.randn(
-        2,
-        10,
-        1024,
-        requires_grad=True,
-    )
+    image = torch.randn(2, 10, 1024, requires_grad=True)
+    text = torch.randn(2, 12, 768, requires_grad=True)
 
-    text = torch.randn(
-        2,
-        12,
-        768,
-        requires_grad=True,
-    )
-
-    projected_image, projected_text = module(
-        image,
-        text,
-    )
+    projected_image, projected_text = module(image, text)
 
     loss = projected_image.mean() + projected_text.mean()
-
     loss.backward()
 
     assert image.grad is not None
     assert text.grad is not None
-
     assert module.img_token.grad is not None
     assert module.txt_token.grad is not None
 
 
 def test_projection_rejects_wrong_image_dimension():
-    """Incorrect image feature dimensions must fail clearly."""
     module = ProjectionAlignment(
         image_input_dim=1024,
         text_input_dim=768,
@@ -157,7 +123,6 @@ def test_projection_rejects_wrong_image_dimension():
 
 
 def test_projection_rejects_wrong_text_dimension():
-    """Incorrect text feature dimensions must fail clearly."""
     module = ProjectionAlignment(
         image_input_dim=1024,
         text_input_dim=768,
@@ -172,7 +137,6 @@ def test_projection_rejects_wrong_text_dimension():
 
 
 def test_projection_rejects_batch_mismatch():
-    """Image and text batch sizes must match."""
     module = ProjectionAlignment(
         image_input_dim=1024,
         text_input_dim=768,
@@ -187,7 +151,6 @@ def test_projection_rejects_batch_mismatch():
 
 
 def test_projection_rejects_non_3d_image_input():
-    """Image tokens must have [B, N, D] shape."""
     module = ModalityProjection(
         input_dim=1024,
         fusion_dim=512,
@@ -204,35 +167,30 @@ def test_projection_rejects_non_3d_image_input():
 # ============================================================
 
 def test_sarcasm_bias_shape():
-    """Sarcasm gate should become one bias value per attention head."""
     module = SarcasmConditionedAttentionBias(
         gate_dim=64,
         num_heads=8,
     )
 
     sarcasm_gate = torch.randn(4, 64)
-
     bias = module(sarcasm_gate)
 
     assert bias.shape == (4, 8, 1, 1)
 
 
 def test_sarcasm_bias_works_with_non_512_gate_dimension():
-    """Gate dimension must remain independent of fusion dimension."""
     module = SarcasmConditionedAttentionBias(
         gate_dim=37,
         num_heads=8,
     )
 
     sarcasm_gate = torch.randn(2, 37)
-
     bias = module(sarcasm_gate)
 
     assert bias.shape == (2, 8, 1, 1)
 
 
 def test_sarcasm_bias_broadcasts_to_attention_logits():
-    """The bias must broadcast across query and key positions."""
     module = SarcasmConditionedAttentionBias(
         gate_dim=64,
         num_heads=8,
@@ -256,7 +214,6 @@ def test_sarcasm_bias_broadcasts_to_attention_logits():
 
 
 def test_sarcasm_bias_changes_attention_logits():
-    """Adding a non-zero learned bias should modify the logits."""
     module = SarcasmConditionedAttentionBias(
         gate_dim=64,
         num_heads=8,
@@ -283,7 +240,6 @@ def test_sarcasm_bias_changes_attention_logits():
 
 
 def test_sarcasm_bias_gradient_flow():
-    """Gradients must flow from attention bias back into the gate."""
     module = SarcasmConditionedAttentionBias(
         gate_dim=64,
         num_heads=8,
@@ -298,7 +254,6 @@ def test_sarcasm_bias_gradient_flow():
     bias = module(sarcasm_gate)
 
     loss = bias.mean()
-
     loss.backward()
 
     assert sarcasm_gate.grad is not None
@@ -307,40 +262,30 @@ def test_sarcasm_bias_gradient_flow():
 
 
 def test_sarcasm_bias_rejects_wrong_gate_shape():
-    """Gate must have shape [B, d]."""
     module = SarcasmConditionedAttentionBias(
         gate_dim=64,
         num_heads=8,
     )
 
-    sarcasm_gate = torch.randn(
-        2,
-        5,
-        64,
-    )
+    sarcasm_gate = torch.randn(2, 5, 64)
 
     with pytest.raises(ValueError):
         module(sarcasm_gate)
 
 
 def test_sarcasm_bias_rejects_wrong_gate_dimension():
-    """Incorrect gate dimension must fail clearly."""
     module = SarcasmConditionedAttentionBias(
         gate_dim=64,
         num_heads=8,
     )
 
-    sarcasm_gate = torch.randn(
-        2,
-        32,
-    )
+    sarcasm_gate = torch.randn(2, 32)
 
     with pytest.raises(ValueError):
         module(sarcasm_gate)
 
 
 def test_sarcasm_bias_rejects_wrong_attention_head_count():
-    """Attention logits must use the configured number of heads."""
     module = SarcasmConditionedAttentionBias(
         gate_dim=64,
         num_heads=8,
@@ -363,7 +308,6 @@ def test_sarcasm_bias_rejects_wrong_attention_head_count():
 
 
 def test_sarcasm_bias_rejects_batch_mismatch():
-    """Attention logits and gate must have the same batch size."""
     module = SarcasmConditionedAttentionBias(
         gate_dim=64,
         num_heads=8,
@@ -390,7 +334,6 @@ def test_sarcasm_bias_rejects_batch_mismatch():
 # ============================================================
 
 def test_cross_modal_fusion_layer_shapes():
-    """One fusion layer must preserve image/text token dimensions."""
     module = CrossModalFusionLayer(
         fusion_dim=512,
         num_heads=8,
@@ -413,7 +356,6 @@ def test_cross_modal_fusion_layer_shapes():
 
 
 def test_cross_modal_fusion_supports_different_sequence_lengths():
-    """Image and text sequence lengths must remain independent."""
     module = CrossModalFusionLayer(
         fusion_dim=512,
         num_heads=8,
@@ -436,19 +378,16 @@ def test_cross_modal_fusion_supports_different_sequence_lengths():
 
 
 def test_fusion_transformer_default_configuration():
-    """Transformer must follow the methodology defaults."""
     module = SarcasmAwareFusionTransformer()
 
     assert module.fusion_dim == 512
     assert module.num_layers == 4
     assert module.num_heads == 8
     assert module.dropout == 0.1
-
     assert len(module.layers) == 4
 
 
 def test_fusion_transformer_output_shapes():
-    """Complete transformer must produce fused and pooled outputs."""
     module = SarcasmAwareFusionTransformer(
         fusion_dim=512,
         num_layers=4,
@@ -472,7 +411,6 @@ def test_fusion_transformer_output_shapes():
 
 
 def test_fusion_transformer_preserves_batch_size():
-    """Batch dimension must remain unchanged."""
     module = SarcasmAwareFusionTransformer(
         sarcasm_gate_dim=32,
     )
@@ -492,11 +430,6 @@ def test_fusion_transformer_preserves_batch_size():
 
 
 def test_fusion_transformer_supports_tbd_gate_dimension():
-    """
-    Sarcasm gate dimension must not be hard-coded to 512.
-
-    The interface currently marks this dimension as TBD.
-    """
     module = SarcasmAwareFusionTransformer(
         sarcasm_gate_dim=37,
     )
@@ -516,7 +449,6 @@ def test_fusion_transformer_supports_tbd_gate_dimension():
 
 
 def test_fusion_transformer_gradient_flow():
-    """Gradients must flow through the complete fusion transformer."""
     module = SarcasmAwareFusionTransformer(
         sarcasm_gate_dim=64,
     )
@@ -548,7 +480,6 @@ def test_fusion_transformer_gradient_flow():
     )
 
     loss = fused_tokens.mean() + pooled.mean()
-
     loss.backward()
 
     assert image_tokens.grad is not None
@@ -557,7 +488,6 @@ def test_fusion_transformer_gradient_flow():
 
 
 def test_fusion_transformer_rejects_wrong_image_dimension():
-    """Image tokens must use the configured fusion dimension."""
     module = SarcasmAwareFusionTransformer(
         fusion_dim=512,
         sarcasm_gate_dim=64,
@@ -576,7 +506,6 @@ def test_fusion_transformer_rejects_wrong_image_dimension():
 
 
 def test_fusion_transformer_rejects_wrong_text_dimension():
-    """Text tokens must use the configured fusion dimension."""
     module = SarcasmAwareFusionTransformer(
         fusion_dim=512,
         sarcasm_gate_dim=64,
@@ -595,7 +524,6 @@ def test_fusion_transformer_rejects_wrong_text_dimension():
 
 
 def test_fusion_transformer_rejects_batch_mismatch():
-    """All three inputs must have matching batch sizes."""
     module = SarcasmAwareFusionTransformer(
         sarcasm_gate_dim=64,
     )
@@ -613,7 +541,6 @@ def test_fusion_transformer_rejects_batch_mismatch():
 
 
 def test_cross_modal_layer_has_required_attention_blocks():
-    """Each layer must contain all three required attention mechanisms."""
     module = CrossModalFusionLayer(
         fusion_dim=512,
         num_heads=8,
@@ -638,7 +565,6 @@ def test_cross_modal_layer_has_required_attention_blocks():
 
 
 def test_all_four_layers_have_sarcasm_bias():
-    """Every fusion layer must receive sarcasm-conditioned attention."""
     module = SarcasmAwareFusionTransformer(
         sarcasm_gate_dim=64,
     )
@@ -646,10 +572,184 @@ def test_all_four_layers_have_sarcasm_bias():
     assert len(module.layers) == 4
 
     for layer in module.layers:
-        assert hasattr(
-            layer,
-            "sarcasm_bias",
-        )
-
+        assert hasattr(layer, "sarcasm_bias")
         assert layer.sarcasm_bias.gate_dim == 64
         assert layer.sarcasm_bias.num_heads == 8
+
+
+# ============================================================
+# CLASSIFICATION HEAD TESTS
+# ============================================================
+
+def test_generic_classification_head_shape():
+    """Generic head should produce the configured number of logits."""
+    module = ClassificationHead(
+        input_dim=512,
+        output_dim=3,
+        dropout=0.1,
+    )
+
+    x = torch.randn(4, 512)
+
+    output = module(x)
+
+    assert output.shape == (4, 3)
+
+
+def test_hate_classification_head_shape():
+    """Hate head must produce two class logits."""
+    module = HateClassificationHead(
+        input_dim=512,
+        dropout=0.1,
+    )
+
+    x = torch.randn(4, 512)
+
+    output = module(x)
+
+    assert output.shape == (4, 2)
+
+
+def test_sarcasm_classification_head_shape():
+    """Sarcasm head must produce two class logits."""
+    module = SarcasmClassificationHead(
+        input_dim=512,
+        dropout=0.1,
+    )
+
+    x = torch.randn(4, 512)
+
+    output = module(x)
+
+    assert output.shape == (4, 2)
+
+
+def test_target_group_classification_head_shape():
+    """Target head must produce five independent target logits."""
+    module = TargetGroupClassificationHead(
+        input_dim=512,
+        dropout=0.1,
+    )
+
+    x = torch.randn(4, 512)
+
+    output = module(x)
+
+    assert output.shape == (4, 5)
+
+
+def test_target_group_names():
+    """Target-group ordering must match the project specification."""
+    module = TargetGroupClassificationHead()
+
+    assert module.target_groups == (
+        "race",
+        "religion",
+        "gender",
+        "disability",
+        "sexuality",
+    )
+
+
+def test_multitask_classification_heads_shapes():
+    """All three classification outputs must have correct shapes."""
+    module = MultitaskClassificationHeads(
+        input_dim=512,
+        dropout=0.1,
+    )
+
+    x = torch.randn(4, 512)
+
+    outputs = module(x)
+
+    assert set(outputs.keys()) == {
+        "hate",
+        "sarcasm",
+        "target",
+    }
+
+    assert outputs["hate"].shape == (4, 2)
+    assert outputs["sarcasm"].shape == (4, 2)
+    assert outputs["target"].shape == (4, 5)
+
+
+def test_classification_heads_return_logits():
+    """Heads must return raw logits, not probabilities."""
+    module = MultitaskClassificationHeads(
+        input_dim=512,
+        dropout=0.0,
+    )
+
+    x = torch.randn(8, 512)
+
+    outputs = module(x)
+
+    for logits in outputs.values():
+        assert torch.isfinite(logits).all()
+
+
+def test_classification_heads_gradient_flow():
+    """Gradients must flow through every classification head."""
+    module = MultitaskClassificationHeads(
+        input_dim=512,
+        dropout=0.1,
+    )
+
+    x = torch.randn(
+        4,
+        512,
+        requires_grad=True,
+    )
+
+    outputs = module(x)
+
+    loss = (
+        outputs["hate"].mean()
+        + outputs["sarcasm"].mean()
+        + outputs["target"].mean()
+    )
+
+    loss.backward()
+
+    assert x.grad is not None
+
+    for parameter in module.parameters():
+        assert parameter.grad is not None
+
+
+def test_classification_head_rejects_wrong_rank():
+    """Classification input must be [B, D]."""
+    module = ClassificationHead(
+        input_dim=512,
+        output_dim=2,
+    )
+
+    x = torch.randn(2, 10, 512)
+
+    with pytest.raises(ValueError):
+        module(x)
+
+
+def test_classification_head_rejects_wrong_dimension():
+    """Classification input dimension must match the configured size."""
+    module = ClassificationHead(
+        input_dim=512,
+        output_dim=2,
+    )
+
+    x = torch.randn(4, 256)
+
+    with pytest.raises(ValueError):
+        module(x)
+
+
+def test_multitask_heads_reject_wrong_input_dimension():
+    """Multitask heads must reject incompatible pooled representations."""
+    module = MultitaskClassificationHeads(
+        input_dim=512,
+    )
+
+    x = torch.randn(4, 256)
+
+    with pytest.raises(ValueError):
+        module(x)
