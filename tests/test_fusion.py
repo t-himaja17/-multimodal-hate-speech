@@ -23,22 +23,39 @@ from multimodal_hate.models.classification.heads import (
     MultitaskClassificationHeads,
 )
 
+from multimodal_hate.training.losses import (
+    BinaryClassificationLoss,
+    MultiLabelBCELoss,
+    NTXentLoss,
+    MultimodalTotalLoss,
+)
+
 
 # ============================================================
 # PROJECTION TESTS
 # ============================================================
 
 def test_image_projection_shape():
-    module = ModalityProjection(input_dim=1024, fusion_dim=512)
+    module = ModalityProjection(
+        input_dim=1024,
+        fusion_dim=512,
+    )
+
     x = torch.randn(2, 257, 1024)
     output = module(x)
+
     assert output.shape == (2, 257, 512)
 
 
 def test_text_projection_shape():
-    module = ModalityProjection(input_dim=768, fusion_dim=512)
+    module = ModalityProjection(
+        input_dim=768,
+        fusion_dim=512,
+    )
+
     x = torch.randn(2, 128, 768)
     output = module(x)
+
     assert output.shape == (2, 128, 512)
 
 
@@ -52,7 +69,10 @@ def test_projection_alignment_shapes():
     image = torch.randn(4, 257, 1024)
     text = torch.randn(4, 128, 768)
 
-    projected_image, projected_text = module(image, text)
+    projected_image, projected_text = module(
+        image,
+        text,
+    )
 
     assert projected_image.shape == (4, 257, 512)
     assert projected_text.shape == (4, 128, 512)
@@ -68,7 +88,10 @@ def test_projection_alignment_supports_different_sequence_lengths():
     image = torch.randn(2, 10, 1024)
     text = torch.randn(2, 37, 768)
 
-    projected_image, projected_text = module(image, text)
+    projected_image, projected_text = module(
+        image,
+        text,
+    )
 
     assert projected_image.shape == (2, 10, 512)
     assert projected_text.shape == (2, 37, 512)
@@ -81,8 +104,16 @@ def test_modality_embeddings_are_learnable():
         fusion_dim=512,
     )
 
-    assert isinstance(module.img_token, torch.nn.Parameter)
-    assert isinstance(module.txt_token, torch.nn.Parameter)
+    assert isinstance(
+        module.img_token,
+        torch.nn.Parameter,
+    )
+
+    assert isinstance(
+        module.txt_token,
+        torch.nn.Parameter,
+    )
+
     assert module.img_token.requires_grad
     assert module.txt_token.requires_grad
 
@@ -94,12 +125,30 @@ def test_projection_gradients_flow():
         fusion_dim=512,
     )
 
-    image = torch.randn(2, 10, 1024, requires_grad=True)
-    text = torch.randn(2, 12, 768, requires_grad=True)
+    image = torch.randn(
+        2,
+        10,
+        1024,
+        requires_grad=True,
+    )
 
-    projected_image, projected_text = module(image, text)
+    text = torch.randn(
+        2,
+        12,
+        768,
+        requires_grad=True,
+    )
 
-    loss = projected_image.mean() + projected_text.mean()
+    projected_image, projected_text = module(
+        image,
+        text,
+    )
+
+    loss = (
+        projected_image.mean()
+        + projected_text.mean()
+    )
+
     loss.backward()
 
     assert image.grad is not None
@@ -173,6 +222,7 @@ def test_sarcasm_bias_shape():
     )
 
     sarcasm_gate = torch.randn(4, 64)
+
     bias = module(sarcasm_gate)
 
     assert bias.shape == (4, 8, 1, 1)
@@ -185,6 +235,7 @@ def test_sarcasm_bias_works_with_non_512_gate_dimension():
     )
 
     sarcasm_gate = torch.randn(2, 37)
+
     bias = module(sarcasm_gate)
 
     assert bias.shape == (2, 8, 1, 1)
@@ -254,6 +305,7 @@ def test_sarcasm_bias_gradient_flow():
     bias = module(sarcasm_gate)
 
     loss = bias.mean()
+
     loss.backward()
 
     assert sarcasm_gate.grad is not None
@@ -267,7 +319,11 @@ def test_sarcasm_bias_rejects_wrong_gate_shape():
         num_heads=8,
     )
 
-    sarcasm_gate = torch.randn(2, 5, 64)
+    sarcasm_gate = torch.randn(
+        2,
+        5,
+        64,
+    )
 
     with pytest.raises(ValueError):
         module(sarcasm_gate)
@@ -279,7 +335,10 @@ def test_sarcasm_bias_rejects_wrong_gate_dimension():
         num_heads=8,
     )
 
-    sarcasm_gate = torch.randn(2, 32)
+    sarcasm_gate = torch.randn(
+        2,
+        32,
+    )
 
     with pytest.raises(ValueError):
         module(sarcasm_gate)
@@ -341,9 +400,22 @@ def test_cross_modal_fusion_layer_shapes():
         sarcasm_gate_dim=64,
     )
 
-    image_tokens = torch.randn(2, 10, 512)
-    text_tokens = torch.randn(2, 12, 512)
-    sarcasm_gate = torch.randn(2, 64)
+    image_tokens = torch.randn(
+        2,
+        10,
+        512,
+    )
+
+    text_tokens = torch.randn(
+        2,
+        12,
+        512,
+    )
+
+    sarcasm_gate = torch.randn(
+        2,
+        64,
+    )
 
     output_image, output_text = module(
         image_tokens,
@@ -351,8 +423,17 @@ def test_cross_modal_fusion_layer_shapes():
         sarcasm_gate,
     )
 
-    assert output_image.shape == (2, 10, 512)
-    assert output_text.shape == (2, 12, 512)
+    assert output_image.shape == (
+        2,
+        10,
+        512,
+    )
+
+    assert output_text.shape == (
+        2,
+        12,
+        512,
+    )
 
 
 def test_cross_modal_fusion_supports_different_sequence_lengths():
@@ -363,9 +444,22 @@ def test_cross_modal_fusion_supports_different_sequence_lengths():
         sarcasm_gate_dim=64,
     )
 
-    image_tokens = torch.randn(2, 17, 512)
-    text_tokens = torch.randn(2, 43, 512)
-    sarcasm_gate = torch.randn(2, 64)
+    image_tokens = torch.randn(
+        2,
+        17,
+        512,
+    )
+
+    text_tokens = torch.randn(
+        2,
+        43,
+        512,
+    )
+
+    sarcasm_gate = torch.randn(
+        2,
+        64,
+    )
 
     output_image, output_text = module(
         image_tokens,
@@ -373,8 +467,17 @@ def test_cross_modal_fusion_supports_different_sequence_lengths():
         sarcasm_gate,
     )
 
-    assert output_image.shape == (2, 17, 512)
-    assert output_text.shape == (2, 43, 512)
+    assert output_image.shape == (
+        2,
+        17,
+        512,
+    )
+
+    assert output_text.shape == (
+        2,
+        43,
+        512,
+    )
 
 
 def test_fusion_transformer_default_configuration():
@@ -384,6 +487,7 @@ def test_fusion_transformer_default_configuration():
     assert module.num_layers == 4
     assert module.num_heads == 8
     assert module.dropout == 0.1
+
     assert len(module.layers) == 4
 
 
@@ -396,9 +500,22 @@ def test_fusion_transformer_output_shapes():
         sarcasm_gate_dim=64,
     )
 
-    image_tokens = torch.randn(2, 10, 512)
-    text_tokens = torch.randn(2, 15, 512)
-    sarcasm_gate = torch.randn(2, 64)
+    image_tokens = torch.randn(
+        2,
+        10,
+        512,
+    )
+
+    text_tokens = torch.randn(
+        2,
+        15,
+        512,
+    )
+
+    sarcasm_gate = torch.randn(
+        2,
+        64,
+    )
 
     fused_tokens, pooled = module(
         image_tokens,
@@ -406,8 +523,16 @@ def test_fusion_transformer_output_shapes():
         sarcasm_gate,
     )
 
-    assert fused_tokens.shape == (2, 25, 512)
-    assert pooled.shape == (2, 512)
+    assert fused_tokens.shape == (
+        2,
+        25,
+        512,
+    )
+
+    assert pooled.shape == (
+        2,
+        512,
+    )
 
 
 def test_fusion_transformer_preserves_batch_size():
@@ -415,9 +540,22 @@ def test_fusion_transformer_preserves_batch_size():
         sarcasm_gate_dim=32,
     )
 
-    image_tokens = torch.randn(4, 8, 512)
-    text_tokens = torch.randn(4, 13, 512)
-    sarcasm_gate = torch.randn(4, 32)
+    image_tokens = torch.randn(
+        4,
+        8,
+        512,
+    )
+
+    text_tokens = torch.randn(
+        4,
+        13,
+        512,
+    )
+
+    sarcasm_gate = torch.randn(
+        4,
+        32,
+    )
 
     fused_tokens, pooled = module(
         image_tokens,
@@ -434,9 +572,22 @@ def test_fusion_transformer_supports_tbd_gate_dimension():
         sarcasm_gate_dim=37,
     )
 
-    image_tokens = torch.randn(2, 6, 512)
-    text_tokens = torch.randn(2, 9, 512)
-    sarcasm_gate = torch.randn(2, 37)
+    image_tokens = torch.randn(
+        2,
+        6,
+        512,
+    )
+
+    text_tokens = torch.randn(
+        2,
+        9,
+        512,
+    )
+
+    sarcasm_gate = torch.randn(
+        2,
+        37,
+    )
 
     fused_tokens, pooled = module(
         image_tokens,
@@ -444,8 +595,16 @@ def test_fusion_transformer_supports_tbd_gate_dimension():
         sarcasm_gate,
     )
 
-    assert fused_tokens.shape == (2, 15, 512)
-    assert pooled.shape == (2, 512)
+    assert fused_tokens.shape == (
+        2,
+        15,
+        512,
+    )
+
+    assert pooled.shape == (
+        2,
+        512,
+    )
 
 
 def test_fusion_transformer_gradient_flow():
@@ -479,7 +638,11 @@ def test_fusion_transformer_gradient_flow():
         sarcasm_gate,
     )
 
-    loss = fused_tokens.mean() + pooled.mean()
+    loss = (
+        fused_tokens.mean()
+        + pooled.mean()
+    )
+
     loss.backward()
 
     assert image_tokens.grad is not None
@@ -493,9 +656,22 @@ def test_fusion_transformer_rejects_wrong_image_dimension():
         sarcasm_gate_dim=64,
     )
 
-    image_tokens = torch.randn(2, 10, 256)
-    text_tokens = torch.randn(2, 10, 512)
-    sarcasm_gate = torch.randn(2, 64)
+    image_tokens = torch.randn(
+        2,
+        10,
+        256,
+    )
+
+    text_tokens = torch.randn(
+        2,
+        10,
+        512,
+    )
+
+    sarcasm_gate = torch.randn(
+        2,
+        64,
+    )
 
     with pytest.raises(ValueError):
         module(
@@ -511,9 +687,22 @@ def test_fusion_transformer_rejects_wrong_text_dimension():
         sarcasm_gate_dim=64,
     )
 
-    image_tokens = torch.randn(2, 10, 512)
-    text_tokens = torch.randn(2, 10, 256)
-    sarcasm_gate = torch.randn(2, 64)
+    image_tokens = torch.randn(
+        2,
+        10,
+        512,
+    )
+
+    text_tokens = torch.randn(
+        2,
+        10,
+        256,
+    )
+
+    sarcasm_gate = torch.randn(
+        2,
+        64,
+    )
 
     with pytest.raises(ValueError):
         module(
@@ -528,9 +717,22 @@ def test_fusion_transformer_rejects_batch_mismatch():
         sarcasm_gate_dim=64,
     )
 
-    image_tokens = torch.randn(2, 10, 512)
-    text_tokens = torch.randn(3, 10, 512)
-    sarcasm_gate = torch.randn(2, 64)
+    image_tokens = torch.randn(
+        2,
+        10,
+        512,
+    )
+
+    text_tokens = torch.randn(
+        3,
+        10,
+        512,
+    )
+
+    sarcasm_gate = torch.randn(
+        2,
+        64,
+    )
 
     with pytest.raises(ValueError):
         module(
@@ -572,7 +774,11 @@ def test_all_four_layers_have_sarcasm_bias():
     assert len(module.layers) == 4
 
     for layer in module.layers:
-        assert hasattr(layer, "sarcasm_bias")
+        assert hasattr(
+            layer,
+            "sarcasm_bias",
+        )
+
         assert layer.sarcasm_bias.gate_dim == 64
         assert layer.sarcasm_bias.num_heads == 8
 
@@ -582,64 +788,83 @@ def test_all_four_layers_have_sarcasm_bias():
 # ============================================================
 
 def test_generic_classification_head_shape():
-    """Generic head should produce the configured number of logits."""
     module = ClassificationHead(
         input_dim=512,
         output_dim=3,
         dropout=0.1,
     )
 
-    x = torch.randn(4, 512)
+    x = torch.randn(
+        4,
+        512,
+    )
 
     output = module(x)
 
-    assert output.shape == (4, 3)
+    assert output.shape == (
+        4,
+        3,
+    )
 
 
 def test_hate_classification_head_shape():
-    """Hate head must produce two class logits."""
     module = HateClassificationHead(
         input_dim=512,
         dropout=0.1,
     )
 
-    x = torch.randn(4, 512)
+    x = torch.randn(
+        4,
+        512,
+    )
 
     output = module(x)
 
-    assert output.shape == (4, 2)
+    assert output.shape == (
+        4,
+        2,
+    )
 
 
 def test_sarcasm_classification_head_shape():
-    """Sarcasm head must produce two class logits."""
     module = SarcasmClassificationHead(
         input_dim=512,
         dropout=0.1,
     )
 
-    x = torch.randn(4, 512)
+    x = torch.randn(
+        4,
+        512,
+    )
 
     output = module(x)
 
-    assert output.shape == (4, 2)
+    assert output.shape == (
+        4,
+        2,
+    )
 
 
 def test_target_group_classification_head_shape():
-    """Target head must produce five independent target logits."""
     module = TargetGroupClassificationHead(
         input_dim=512,
         dropout=0.1,
     )
 
-    x = torch.randn(4, 512)
+    x = torch.randn(
+        4,
+        512,
+    )
 
     output = module(x)
 
-    assert output.shape == (4, 5)
+    assert output.shape == (
+        4,
+        5,
+    )
 
 
 def test_target_group_names():
-    """Target-group ordering must match the project specification."""
     module = TargetGroupClassificationHead()
 
     assert module.target_groups == (
@@ -652,13 +877,15 @@ def test_target_group_names():
 
 
 def test_multitask_classification_heads_shapes():
-    """All three classification outputs must have correct shapes."""
     module = MultitaskClassificationHeads(
         input_dim=512,
         dropout=0.1,
     )
 
-    x = torch.randn(4, 512)
+    x = torch.randn(
+        4,
+        512,
+    )
 
     outputs = module(x)
 
@@ -668,19 +895,32 @@ def test_multitask_classification_heads_shapes():
         "target",
     }
 
-    assert outputs["hate"].shape == (4, 2)
-    assert outputs["sarcasm"].shape == (4, 2)
-    assert outputs["target"].shape == (4, 5)
+    assert outputs["hate"].shape == (
+        4,
+        2,
+    )
+
+    assert outputs["sarcasm"].shape == (
+        4,
+        2,
+    )
+
+    assert outputs["target"].shape == (
+        4,
+        5,
+    )
 
 
 def test_classification_heads_return_logits():
-    """Heads must return raw logits, not probabilities."""
     module = MultitaskClassificationHeads(
         input_dim=512,
         dropout=0.0,
     )
 
-    x = torch.randn(8, 512)
+    x = torch.randn(
+        8,
+        512,
+    )
 
     outputs = module(x)
 
@@ -689,7 +929,6 @@ def test_classification_heads_return_logits():
 
 
 def test_classification_heads_gradient_flow():
-    """Gradients must flow through every classification head."""
     module = MultitaskClassificationHeads(
         input_dim=512,
         dropout=0.1,
@@ -718,38 +957,523 @@ def test_classification_heads_gradient_flow():
 
 
 def test_classification_head_rejects_wrong_rank():
-    """Classification input must be [B, D]."""
     module = ClassificationHead(
         input_dim=512,
         output_dim=2,
     )
 
-    x = torch.randn(2, 10, 512)
+    x = torch.randn(
+        2,
+        10,
+        512,
+    )
 
     with pytest.raises(ValueError):
         module(x)
 
 
 def test_classification_head_rejects_wrong_dimension():
-    """Classification input dimension must match the configured size."""
     module = ClassificationHead(
         input_dim=512,
         output_dim=2,
     )
 
-    x = torch.randn(4, 256)
+    x = torch.randn(
+        4,
+        256,
+    )
 
     with pytest.raises(ValueError):
         module(x)
 
 
 def test_multitask_heads_reject_wrong_input_dimension():
-    """Multitask heads must reject incompatible pooled representations."""
     module = MultitaskClassificationHeads(
         input_dim=512,
     )
 
-    x = torch.randn(4, 256)
+    x = torch.randn(
+        4,
+        256,
+    )
 
     with pytest.raises(ValueError):
         module(x)
+
+
+# ============================================================
+# LOSS TESTS
+# ============================================================
+
+def test_binary_classification_loss_returns_scalar():
+    module = BinaryClassificationLoss()
+
+    logits = torch.randn(
+        4,
+        2,
+    )
+
+    targets = torch.randint(
+        0,
+        2,
+        (4, 2),
+    ).float()
+
+    loss = module(
+        logits,
+        targets,
+    )
+
+    assert loss.ndim == 0
+    assert torch.isfinite(loss)
+
+
+def test_binary_classification_loss_gradient_flow():
+    module = BinaryClassificationLoss()
+
+    logits = torch.randn(
+        4,
+        2,
+        requires_grad=True,
+    )
+
+    targets = torch.randint(
+        0,
+        2,
+        (4, 2),
+    ).float()
+
+    loss = module(
+        logits,
+        targets,
+    )
+
+    loss.backward()
+
+    assert logits.grad is not None
+
+
+def test_binary_classification_loss_rejects_shape_mismatch():
+    module = BinaryClassificationLoss()
+
+    logits = torch.randn(
+        4,
+        2,
+    )
+
+    targets = torch.randn(
+        4,
+        1,
+    )
+
+    with pytest.raises(ValueError):
+        module(
+            logits,
+            targets,
+        )
+
+
+def test_multilabel_bce_shape():
+    module = MultiLabelBCELoss()
+
+    logits = torch.randn(
+        4,
+        5,
+    )
+
+    targets = torch.randint(
+        0,
+        2,
+        (4, 5),
+    ).float()
+
+    loss = module(
+        logits,
+        targets,
+    )
+
+    assert loss.ndim == 0
+    assert torch.isfinite(loss)
+
+
+def test_multilabel_bce_gradient_flow():
+    module = MultiLabelBCELoss()
+
+    logits = torch.randn(
+        4,
+        5,
+        requires_grad=True,
+    )
+
+    targets = torch.randint(
+        0,
+        2,
+        (4, 5),
+    ).float()
+
+    loss = module(
+        logits,
+        targets,
+    )
+
+    loss.backward()
+
+    assert logits.grad is not None
+
+
+def test_nt_xent_returns_scalar():
+    module = NTXentLoss(
+        temperature=0.07,
+    )
+
+    image = torch.randn(
+        8,
+        512,
+    )
+
+    text = torch.randn(
+        8,
+        512,
+    )
+
+    loss = module(
+        image,
+        text,
+    )
+
+    assert loss.ndim == 0
+    assert torch.isfinite(loss)
+
+
+def test_nt_xent_positive_pairs_are_aligned():
+    module = NTXentLoss(
+        temperature=0.07,
+    )
+
+    image = torch.randn(
+        8,
+        512,
+    )
+
+    text = image.clone()
+
+    loss = module(
+        image,
+        text,
+    )
+
+    assert torch.isfinite(loss)
+    assert loss.item() >= 0.0
+
+
+def test_nt_xent_gradient_flow():
+    module = NTXentLoss(
+        temperature=0.07,
+    )
+
+    image = torch.randn(
+        8,
+        512,
+        requires_grad=True,
+    )
+
+    text = torch.randn(
+        8,
+        512,
+        requires_grad=True,
+    )
+
+    loss = module(
+        image,
+        text,
+    )
+
+    loss.backward()
+
+    assert image.grad is not None
+    assert text.grad is not None
+
+
+def test_nt_xent_rejects_batch_size_one():
+    module = NTXentLoss()
+
+    image = torch.randn(
+        1,
+        512,
+    )
+
+    text = torch.randn(
+        1,
+        512,
+    )
+
+    with pytest.raises(ValueError):
+        module(
+            image,
+            text,
+        )
+
+
+def test_nt_xent_rejects_shape_mismatch():
+    module = NTXentLoss()
+
+    image = torch.randn(
+        8,
+        512,
+    )
+
+    text = torch.randn(
+        8,
+        256,
+    )
+
+    with pytest.raises(ValueError):
+        module(
+            image,
+            text,
+        )
+
+
+def test_nt_xent_rejects_invalid_rank():
+    module = NTXentLoss()
+
+    image = torch.randn(
+        2,
+        8,
+        512,
+    )
+
+    text = torch.randn(
+        2,
+        8,
+        512,
+    )
+
+    with pytest.raises(ValueError):
+        module(
+            image,
+            text,
+        )
+
+
+def test_total_loss_default_weights():
+    module = MultimodalTotalLoss()
+
+    assert module.sarcasm_weight == 0.3
+    assert module.contrastive_weight == 0.1
+    assert module.target_weight == 0.2
+
+
+def test_total_loss_returns_all_components():
+    module = MultimodalTotalLoss()
+
+    hate_logits = torch.randn(
+        4,
+        2,
+    )
+
+    hate_targets = torch.randint(
+        0,
+        2,
+        (4, 2),
+    ).float()
+
+    sarcasm_logits = torch.randn(
+        4,
+        2,
+    )
+
+    sarcasm_targets = torch.randint(
+        0,
+        2,
+        (4, 2),
+    ).float()
+
+    target_logits = torch.randn(
+        4,
+        5,
+    )
+
+    target_targets = torch.randint(
+        0,
+        2,
+        (4, 5),
+    ).float()
+
+    image = torch.randn(
+        4,
+        512,
+    )
+
+    text = torch.randn(
+        4,
+        512,
+    )
+
+    losses = module(
+        hate_logits,
+        hate_targets,
+        sarcasm_logits,
+        sarcasm_targets,
+        target_logits,
+        target_targets,
+        image,
+        text,
+    )
+
+    assert set(losses.keys()) == {
+        "hate",
+        "sarcasm",
+        "contrastive",
+        "target",
+        "total",
+    }
+
+    for value in losses.values():
+        assert value.ndim == 0
+        assert torch.isfinite(value)
+
+
+def test_total_loss_weighting():
+    module = MultimodalTotalLoss(
+        sarcasm_weight=0.3,
+        contrastive_weight=0.1,
+        target_weight=0.2,
+    )
+
+    hate_logits = torch.randn(
+        4,
+        2,
+    )
+
+    hate_targets = torch.randint(
+        0,
+        2,
+        (4, 2),
+    ).float()
+
+    sarcasm_logits = torch.randn(
+        4,
+        2,
+    )
+
+    sarcasm_targets = torch.randint(
+        0,
+        2,
+        (4, 2),
+    ).float()
+
+    target_logits = torch.randn(
+        4,
+        5,
+    )
+
+    target_targets = torch.randint(
+        0,
+        2,
+        (4, 5),
+    ).float()
+
+    image = torch.randn(
+        4,
+        512,
+    )
+
+    text = torch.randn(
+        4,
+        512,
+    )
+
+    losses = module(
+        hate_logits,
+        hate_targets,
+        sarcasm_logits,
+        sarcasm_targets,
+        target_logits,
+        target_targets,
+        image,
+        text,
+    )
+
+    expected = (
+        losses["hate"]
+        + 0.3 * losses["sarcasm"]
+        + 0.1 * losses["contrastive"]
+        + 0.2 * losses["target"]
+    )
+
+    assert torch.allclose(
+        losses["total"],
+        expected,
+    )
+
+
+def test_total_loss_gradient_flow():
+    module = MultimodalTotalLoss()
+
+    hate_logits = torch.randn(
+        4,
+        2,
+        requires_grad=True,
+    )
+
+    hate_targets = torch.randint(
+        0,
+        2,
+        (4, 2),
+    ).float()
+
+    sarcasm_logits = torch.randn(
+        4,
+        2,
+        requires_grad=True,
+    )
+
+    sarcasm_targets = torch.randint(
+        0,
+        2,
+        (4, 2),
+    ).float()
+
+    target_logits = torch.randn(
+        4,
+        5,
+        requires_grad=True,
+    )
+
+    target_targets = torch.randint(
+        0,
+        2,
+        (4, 5),
+    ).float()
+
+    image = torch.randn(
+        4,
+        512,
+        requires_grad=True,
+    )
+
+    text = torch.randn(
+        4,
+        512,
+        requires_grad=True,
+    )
+
+    losses = module(
+        hate_logits,
+        hate_targets,
+        sarcasm_logits,
+        sarcasm_targets,
+        target_logits,
+        target_targets,
+        image,
+        text,
+    )
+
+    losses["total"].backward()
+
+    assert hate_logits.grad is not None
+    assert sarcasm_logits.grad is not None
+    assert target_logits.grad is not None
+    assert image.grad is not None
+    assert text.grad is not None
