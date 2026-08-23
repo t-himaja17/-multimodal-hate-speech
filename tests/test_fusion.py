@@ -10,6 +10,11 @@ from multimodal_hate.models.fusion.sarcasm_bias import (
     SarcasmConditionedAttentionBias,
 )
 
+from multimodal_hate.models.fusion.fusion_transformer import (
+    CrossModalFusionLayer,
+    SarcasmAwareFusionTransformer,
+)
+
 
 # ============================================================
 # PROJECTION TESTS
@@ -297,7 +302,6 @@ def test_sarcasm_bias_gradient_flow():
     loss.backward()
 
     assert sarcasm_gate.grad is not None
-
     assert module.projection.weight.grad is not None
     assert module.projection.bias.grad is not None
 
@@ -379,3 +383,273 @@ def test_sarcasm_bias_rejects_batch_mismatch():
             attention_logits,
             sarcasm_gate,
         )
+
+
+# ============================================================
+# CROSS-MODAL FUSION TESTS
+# ============================================================
+
+def test_cross_modal_fusion_layer_shapes():
+    """One fusion layer must preserve image/text token dimensions."""
+    module = CrossModalFusionLayer(
+        fusion_dim=512,
+        num_heads=8,
+        dropout=0.1,
+        sarcasm_gate_dim=64,
+    )
+
+    image_tokens = torch.randn(2, 10, 512)
+    text_tokens = torch.randn(2, 12, 512)
+    sarcasm_gate = torch.randn(2, 64)
+
+    output_image, output_text = module(
+        image_tokens,
+        text_tokens,
+        sarcasm_gate,
+    )
+
+    assert output_image.shape == (2, 10, 512)
+    assert output_text.shape == (2, 12, 512)
+
+
+def test_cross_modal_fusion_supports_different_sequence_lengths():
+    """Image and text sequence lengths must remain independent."""
+    module = CrossModalFusionLayer(
+        fusion_dim=512,
+        num_heads=8,
+        dropout=0.1,
+        sarcasm_gate_dim=64,
+    )
+
+    image_tokens = torch.randn(2, 17, 512)
+    text_tokens = torch.randn(2, 43, 512)
+    sarcasm_gate = torch.randn(2, 64)
+
+    output_image, output_text = module(
+        image_tokens,
+        text_tokens,
+        sarcasm_gate,
+    )
+
+    assert output_image.shape == (2, 17, 512)
+    assert output_text.shape == (2, 43, 512)
+
+
+def test_fusion_transformer_default_configuration():
+    """Transformer must follow the methodology defaults."""
+    module = SarcasmAwareFusionTransformer()
+
+    assert module.fusion_dim == 512
+    assert module.num_layers == 4
+    assert module.num_heads == 8
+    assert module.dropout == 0.1
+
+    assert len(module.layers) == 4
+
+
+def test_fusion_transformer_output_shapes():
+    """Complete transformer must produce fused and pooled outputs."""
+    module = SarcasmAwareFusionTransformer(
+        fusion_dim=512,
+        num_layers=4,
+        num_heads=8,
+        dropout=0.1,
+        sarcasm_gate_dim=64,
+    )
+
+    image_tokens = torch.randn(2, 10, 512)
+    text_tokens = torch.randn(2, 15, 512)
+    sarcasm_gate = torch.randn(2, 64)
+
+    fused_tokens, pooled = module(
+        image_tokens,
+        text_tokens,
+        sarcasm_gate,
+    )
+
+    assert fused_tokens.shape == (2, 25, 512)
+    assert pooled.shape == (2, 512)
+
+
+def test_fusion_transformer_preserves_batch_size():
+    """Batch dimension must remain unchanged."""
+    module = SarcasmAwareFusionTransformer(
+        sarcasm_gate_dim=32,
+    )
+
+    image_tokens = torch.randn(4, 8, 512)
+    text_tokens = torch.randn(4, 13, 512)
+    sarcasm_gate = torch.randn(4, 32)
+
+    fused_tokens, pooled = module(
+        image_tokens,
+        text_tokens,
+        sarcasm_gate,
+    )
+
+    assert fused_tokens.size(0) == 4
+    assert pooled.size(0) == 4
+
+
+def test_fusion_transformer_supports_tbd_gate_dimension():
+    """
+    Sarcasm gate dimension must not be hard-coded to 512.
+
+    The interface currently marks this dimension as TBD.
+    """
+    module = SarcasmAwareFusionTransformer(
+        sarcasm_gate_dim=37,
+    )
+
+    image_tokens = torch.randn(2, 6, 512)
+    text_tokens = torch.randn(2, 9, 512)
+    sarcasm_gate = torch.randn(2, 37)
+
+    fused_tokens, pooled = module(
+        image_tokens,
+        text_tokens,
+        sarcasm_gate,
+    )
+
+    assert fused_tokens.shape == (2, 15, 512)
+    assert pooled.shape == (2, 512)
+
+
+def test_fusion_transformer_gradient_flow():
+    """Gradients must flow through the complete fusion transformer."""
+    module = SarcasmAwareFusionTransformer(
+        sarcasm_gate_dim=64,
+    )
+
+    image_tokens = torch.randn(
+        2,
+        6,
+        512,
+        requires_grad=True,
+    )
+
+    text_tokens = torch.randn(
+        2,
+        8,
+        512,
+        requires_grad=True,
+    )
+
+    sarcasm_gate = torch.randn(
+        2,
+        64,
+        requires_grad=True,
+    )
+
+    fused_tokens, pooled = module(
+        image_tokens,
+        text_tokens,
+        sarcasm_gate,
+    )
+
+    loss = fused_tokens.mean() + pooled.mean()
+
+    loss.backward()
+
+    assert image_tokens.grad is not None
+    assert text_tokens.grad is not None
+    assert sarcasm_gate.grad is not None
+
+
+def test_fusion_transformer_rejects_wrong_image_dimension():
+    """Image tokens must use the configured fusion dimension."""
+    module = SarcasmAwareFusionTransformer(
+        fusion_dim=512,
+        sarcasm_gate_dim=64,
+    )
+
+    image_tokens = torch.randn(2, 10, 256)
+    text_tokens = torch.randn(2, 10, 512)
+    sarcasm_gate = torch.randn(2, 64)
+
+    with pytest.raises(ValueError):
+        module(
+            image_tokens,
+            text_tokens,
+            sarcasm_gate,
+        )
+
+
+def test_fusion_transformer_rejects_wrong_text_dimension():
+    """Text tokens must use the configured fusion dimension."""
+    module = SarcasmAwareFusionTransformer(
+        fusion_dim=512,
+        sarcasm_gate_dim=64,
+    )
+
+    image_tokens = torch.randn(2, 10, 512)
+    text_tokens = torch.randn(2, 10, 256)
+    sarcasm_gate = torch.randn(2, 64)
+
+    with pytest.raises(ValueError):
+        module(
+            image_tokens,
+            text_tokens,
+            sarcasm_gate,
+        )
+
+
+def test_fusion_transformer_rejects_batch_mismatch():
+    """All three inputs must have matching batch sizes."""
+    module = SarcasmAwareFusionTransformer(
+        sarcasm_gate_dim=64,
+    )
+
+    image_tokens = torch.randn(2, 10, 512)
+    text_tokens = torch.randn(3, 10, 512)
+    sarcasm_gate = torch.randn(2, 64)
+
+    with pytest.raises(ValueError):
+        module(
+            image_tokens,
+            text_tokens,
+            sarcasm_gate,
+        )
+
+
+def test_cross_modal_layer_has_required_attention_blocks():
+    """Each layer must contain all three required attention mechanisms."""
+    module = CrossModalFusionLayer(
+        fusion_dim=512,
+        num_heads=8,
+        dropout=0.1,
+        sarcasm_gate_dim=64,
+    )
+
+    assert isinstance(
+        module.image_to_text,
+        torch.nn.MultiheadAttention,
+    )
+
+    assert isinstance(
+        module.text_to_image,
+        torch.nn.MultiheadAttention,
+    )
+
+    assert isinstance(
+        module.fused_self_attention,
+        torch.nn.MultiheadAttention,
+    )
+
+
+def test_all_four_layers_have_sarcasm_bias():
+    """Every fusion layer must receive sarcasm-conditioned attention."""
+    module = SarcasmAwareFusionTransformer(
+        sarcasm_gate_dim=64,
+    )
+
+    assert len(module.layers) == 4
+
+    for layer in module.layers:
+        assert hasattr(
+            layer,
+            "sarcasm_bias",
+        )
+
+        assert layer.sarcasm_bias.gate_dim == 64
+        assert layer.sarcasm_bias.num_heads == 8
