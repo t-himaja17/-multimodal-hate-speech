@@ -82,16 +82,8 @@ from multimodal_hate.models.classification.heads import (
     MultitaskClassificationHeads,
 )
 
-from multimodal_hate.models.sarcasm.sarcasm_bert import (
-    SarcasmBERT,
-)
-
 from multimodal_hate.models.sarcasm.incongruity import (
     VisualTextIncongruity,
-)
-
-from multimodal_hate.models.sarcasm.sentiment import (
-    SentimentReversal,
 )
 
 from multimodal_hate.models.sarcasm.gate import (
@@ -107,37 +99,55 @@ class MultimodalHateSpeechOutput:
     Attributes
     ----------
     logits:
-        Classification logits containing:
-            hate   [B, 2]
-            sarcasm [B, 2]
-            target [B, 5]
+        Classification logits:
+
+            hate     [B, 2]
+            sarcasm  [B, 2]
+            target   [B, 5]
 
     fused_tokens:
-        Complete fused token representation
-        [B, N_img + N_txt, 512].
+        Complete fused token representation:
+
+            [B, N_img + N_txt, fusion_dim]
 
     pooled:
-        Final pooled multimodal representation [B, 512].
+        Final pooled multimodal representation:
+
+            [B, fusion_dim]
 
     image_representation:
-        Mean-pooled projected image representation [B, 512].
-        Used by the contrastive loss.
+        Mean-pooled projected image representation:
+
+            [B, fusion_dim]
+
+        Used by NT-Xent contrastive loss.
 
     text_representation:
-        Mean-pooled projected text representation [B, 512].
-        Used by the contrastive loss.
+        Mean-pooled projected text representation:
+
+            [B, fusion_dim]
+
+        Used by NT-Xent contrastive loss.
 
     sarcasm_gate:
-        Learned sarcasm-conditioning vector [B, gate_dim].
+        Learned sarcasm-conditioning vector:
+
+            [B, gate_dim]
 
     sarcasm_probability:
-        SarcasmBERT probability [B, 1].
+        SarcasmBERT probability:
+
+            [B, 1]
 
     incongruity_score:
-        Visual-text incongruity score [B, 1].
+        Visual-text incongruity score:
+
+            [B, 1]
 
     sentiment_reversal:
-        Sentiment reversal indicator [B, 1].
+        Sentiment reversal indicator:
+
+            [B, 1]
     """
 
     logits: dict[str, Tensor]
@@ -155,71 +165,31 @@ class MultimodalHateSpeechModel(nn.Module):
     """
     End-to-end sarcasm-aware multimodal hate-speech model.
 
-    External encoders are injectable so that the model can be tested
-    using lightweight dummy modules without loading large pretrained
-    checkpoints.
-
     Default architecture:
 
-        ViT-L/14             → 1024
-        HateBERT             → 768
-        CLIP image           → 512
-        CLIP text            → 512
-        shared fusion space  → 512
-        sarcasm gate         → 64
-        fusion layers        → 4
-        attention heads      → 8
+        ViT-L/14             -> 1024
+        HateBERT             -> 768
+        CLIP image           -> 512
+        CLIP text            -> 512
+        shared fusion space  -> 512
+        sarcasm gate         -> 64
+        fusion layers        -> 4
+        attention heads      -> 8
 
-    Parameters
-    ----------
-    image_encoder:
-        ViT-L/14 image encoder.
+    External encoders are injectable so that the complete model can
+    be tested with lightweight dummy modules without downloading
+    pretrained checkpoints.
 
-        Expected output:
-            [B, N_img, 1024]
+    Important text interface:
 
-    text_encoder:
-        HateBERT text encoder.
+        HateBERT.forward(texts)
+            -> [B, 768]
 
-        Preferred interface:
-            encode_tokens(texts) → [B, N_txt, 768]
+        HateBERT.encode_tokens(texts)
+            -> [B, N_txt, 768]
 
-        The encoder's normal forward() method returns only the CLS
-        representation [B, 768], so encode_tokens() is required
-        for transformer fusion.
-
-    clip_image_encoder:
-        CLIP image encoder.
-
-        Expected output:
-            [B, 512]
-
-    clip_text_encoder:
-        CLIP text encoder.
-
-        Expected output:
-            [B, 512]
-
-    sarcasm_encoder:
-        Optional SarcasmBERT module.
-
-    sentiment_module:
-        Optional SentimentReversal module.
-
-    fusion_dim:
-        Shared multimodal fusion dimension.
-
-    sarcasm_gate_dim:
-        Dimension of the sarcasm gate.
-
-    num_fusion_layers:
-        Number of cross-modal fusion layers.
-
-    num_heads:
-        Number of attention heads.
-
-    dropout:
-        Dropout probability.
+    The fusion transformer requires token-level representations,
+    therefore encode_tokens() is mandatory for text fusion.
     """
 
     def __init__(
@@ -258,6 +228,13 @@ class MultimodalHateSpeechModel(nn.Module):
                 "num_heads must be greater than zero."
             )
 
+        if fusion_dim % num_heads != 0:
+            raise ValueError(
+                "fusion_dim must be divisible by num_heads. "
+                f"Got fusion_dim={fusion_dim}, "
+                f"num_heads={num_heads}."
+            )
+
         if not 0.0 <= dropout < 1.0:
             raise ValueError(
                 "dropout must be in the range [0, 1)."
@@ -266,9 +243,9 @@ class MultimodalHateSpeechModel(nn.Module):
         self.fusion_dim = fusion_dim
         self.sarcasm_gate_dim = sarcasm_gate_dim
 
-        # --------------------------------------------------------
-        # Encoders
-        # --------------------------------------------------------
+        # ========================================================
+        # ENCODERS
+        # ========================================================
 
         self.image_encoder = (
             image_encoder
@@ -297,9 +274,9 @@ class MultimodalHateSpeechModel(nn.Module):
         self.sarcasm_encoder = sarcasm_encoder
         self.sentiment_module = sentiment_module
 
-        # --------------------------------------------------------
-        # Determine encoder dimensions
-        # --------------------------------------------------------
+        # ========================================================
+        # ENCODER DIMENSIONS
+        # ========================================================
 
         image_input_dim = getattr(
             self.image_encoder,
@@ -313,19 +290,9 @@ class MultimodalHateSpeechModel(nn.Module):
             768,
         )
 
-        # --------------------------------------------------------
-        # Projection
-        #
-        # ViT:
-        #     [B, N_img, 1024]
-        #          ↓
-        #     [B, N_img, 512]
-        #
-        # HateBERT:
-        #     [B, N_txt, 768]
-        #          ↓
-        #     [B, N_txt, 512]
-        # --------------------------------------------------------
+        # ========================================================
+        # PROJECTION / MODALITY ALIGNMENT
+        # ========================================================
 
         self.projection = ProjectionAlignment(
             image_input_dim=image_input_dim,
@@ -333,26 +300,26 @@ class MultimodalHateSpeechModel(nn.Module):
             fusion_dim=fusion_dim,
         )
 
-        # --------------------------------------------------------
-        # Visual-text incongruity
-        # --------------------------------------------------------
+        # ========================================================
+        # VISUAL-TEXT INCONGRUITY
+        # ========================================================
 
         self.incongruity = VisualTextIncongruity(
             embedding_dim=512,
         )
 
-        # --------------------------------------------------------
-        # Sarcasm gate
-        # --------------------------------------------------------
+        # ========================================================
+        # SARCASM GATE
+        # ========================================================
 
         self.sarcasm_gate = SarcasmGate(
             gate_dim=sarcasm_gate_dim,
             dropout=dropout,
         )
 
-        # --------------------------------------------------------
-        # Cross-modal fusion transformer
-        # --------------------------------------------------------
+        # ========================================================
+        # CROSS-MODAL FUSION TRANSFORMER
+        # ========================================================
 
         self.fusion = SarcasmAwareFusionTransformer(
             fusion_dim=fusion_dim,
@@ -362,9 +329,9 @@ class MultimodalHateSpeechModel(nn.Module):
             sarcasm_gate_dim=sarcasm_gate_dim,
         )
 
-        # --------------------------------------------------------
-        # Classification heads
-        # --------------------------------------------------------
+        # ========================================================
+        # MULTITASK CLASSIFICATION HEADS
+        # ========================================================
 
         self.classification_heads = MultitaskClassificationHeads(
             input_dim=fusion_dim,
@@ -372,14 +339,14 @@ class MultimodalHateSpeechModel(nn.Module):
         )
 
     # ============================================================
-    # VALIDATION
+    # VALIDATION HELPERS
     # ============================================================
 
     @staticmethod
     def _validate_images(
         images: Tensor,
     ) -> None:
-        """Validate image tensor."""
+        """Validate input image tensor."""
 
         if not isinstance(images, Tensor):
             raise TypeError(
@@ -398,24 +365,60 @@ class MultimodalHateSpeechModel(nn.Module):
                 f"Got {images.size(1)} channels."
             )
 
+        if images.size(0) <= 0:
+            raise ValueError(
+                "Image batch must contain at least one sample."
+            )
+
     @staticmethod
     def _validate_batch_size(
         batch_size: int,
         tensor: Tensor,
         name: str,
     ) -> None:
-        """Ensure a tensor has the expected batch size."""
+        """Validate tensor type and batch dimension."""
 
         if not isinstance(tensor, Tensor):
             raise TypeError(
                 f"{name} must return a torch.Tensor."
             )
 
+        if tensor.ndim == 0:
+            raise ValueError(
+                f"{name} must have a batch dimension."
+            )
+
         if tensor.size(0) != batch_size:
             raise ValueError(
-                f"{name} batch size does not match "
-                f"image batch size. "
-                f"Expected {batch_size}, got {tensor.size(0)}."
+                f"{name} batch size does not match image "
+                f"batch size. Expected {batch_size}, "
+                f"got {tensor.size(0)}."
+            )
+
+    @staticmethod
+    def _validate_signal(
+        signal: Tensor,
+        batch_size: int,
+        name: str,
+    ) -> None:
+        """Validate a [B, 1] scalar signal."""
+
+        if not isinstance(signal, Tensor):
+            raise TypeError(
+                f"{name} must be a torch.Tensor."
+            )
+
+        if signal.ndim != 2 or signal.size(1) != 1:
+            raise ValueError(
+                f"{name} must have shape [B, 1]. "
+                f"Got {tuple(signal.shape)}."
+            )
+
+        if signal.size(0) != batch_size:
+            raise ValueError(
+                f"{name} batch size does not match image "
+                f"batch size. Expected {batch_size}, "
+                f"got {signal.size(0)}."
             )
 
     # ============================================================
@@ -427,24 +430,15 @@ class MultimodalHateSpeechModel(nn.Module):
         texts,
     ) -> Tensor:
         """
-        Obtain token-level text representations.
+        Obtain token-level HateBERT representations.
 
-        HateBERT now exposes:
+        Required interface:
 
             encode_tokens(texts)
-                → [B, N_txt, 768]
+                -> [B, N_txt, 768]
 
-        while its normal forward() method intentionally remains:
-
-            forward(texts)
-                → [B, 768]
-
-        The fusion transformer requires token-level features,
-        therefore encode_tokens() is preferred.
-
-        A fallback to forward() is intentionally NOT converted into
-        fake token sequences because that would silently produce an
-        invalid multimodal representation.
+        We intentionally do not fall back to forward() because
+        forward() returns only the CLS representation [B, 768].
         """
 
         encode_tokens = getattr(
@@ -455,8 +449,8 @@ class MultimodalHateSpeechModel(nn.Module):
 
         if encode_tokens is None:
             raise AttributeError(
-                "The text encoder must provide an "
-                "encode_tokens(texts) method for multimodal "
+                "The text encoder must provide "
+                "encode_tokens(texts) for multimodal "
                 "transformer fusion."
             )
 
@@ -475,107 +469,90 @@ class MultimodalHateSpeechModel(nn.Module):
                 f"Got {tuple(text_tokens.shape)}."
             )
 
+        if text_tokens.size(1) <= 0:
+            raise ValueError(
+                "Text encoder returned zero tokens."
+            )
+
         return text_tokens
 
     # ============================================================
-    # SARCASM SIGNALS
+    # SARCASM PROBABILITY
     # ============================================================
 
     def _compute_sarcasm_probability(
         self,
         texts,
         sarcasm_probability: Optional[Tensor],
+        batch_size: int,
+        reference_tensor: Tensor,
     ) -> Tensor:
         """
         Obtain sarcasm probability.
 
-        If an explicit probability is supplied, it is used directly.
+        If supplied externally, use it.
 
-        Otherwise the configured SarcasmBERT module is required.
+        Otherwise use the configured SarcasmBERT module.
 
-        Returns:
-            [B, 1]
+        Returned tensor is moved to the same device and dtype as
+        the reference tensor so it can safely enter SarcasmGate.
         """
 
         if sarcasm_probability is not None:
 
-            if not isinstance(
-                sarcasm_probability,
-                Tensor,
+            probability = sarcasm_probability
+
+        else:
+
+            if self.sarcasm_encoder is None:
+                raise ValueError(
+                    "sarcasm_encoder is required when "
+                    "sarcasm_probability is not supplied."
+                )
+
+            output = self.sarcasm_encoder(texts)
+
+            if hasattr(
+                output,
+                "probability",
             ):
-                raise TypeError(
-                    "sarcasm_probability must be a "
-                    "torch.Tensor."
-                )
+                probability = output.probability
+            else:
+                probability = output
 
-            if sarcasm_probability.ndim != 2:
-                raise ValueError(
-                    "sarcasm_probability must have "
-                    "shape [B, 1]."
-                )
-
-            if sarcasm_probability.size(1) != 1:
-                raise ValueError(
-                    "sarcasm_probability must have "
-                    "shape [B, 1]."
-                )
-
-            return sarcasm_probability
-
-        if self.sarcasm_encoder is None:
-            raise ValueError(
-                "sarcasm_encoder is required when "
-                "sarcasm_probability is not supplied."
-            )
-
-        output = self.sarcasm_encoder(
-            texts
+        self._validate_signal(
+            probability,
+            batch_size,
+            "sarcasm_probability",
         )
 
-        if hasattr(
-            output,
-            "probability",
-        ):
-            probability = output.probability
-        else:
-            probability = output
-
-        if not isinstance(
-            probability,
-            Tensor,
-        ):
-            raise TypeError(
-                "Sarcasm encoder must return a tensor "
-                "or an object containing a probability "
-                "tensor."
-            )
-
-        if probability.ndim != 2:
-            raise ValueError(
-                "Sarcasm probability must have shape [B, 1]."
-            )
-
-        if probability.size(1) != 1:
-            raise ValueError(
-                "Sarcasm probability must have shape [B, 1]."
-            )
+        probability = probability.to(
+            device=reference_tensor.device,
+            dtype=reference_tensor.dtype,
+        )
 
         return probability
+
+    # ============================================================
+    # SENTIMENT REVERSAL
+    # ============================================================
 
     def _compute_sentiment_reversal(
         self,
         texts,
         sentiment_reversal: Optional[Tensor],
+        batch_size: int,
+        reference_tensor: Tensor,
     ) -> Tensor:
         """
         Obtain sentiment-reversal signal.
 
-        If explicitly supplied, use it.
+        If supplied externally, use it.
 
         Otherwise use the configured SentimentReversal module.
 
-        Returns:
-            [B, 1]
+        Returned tensor is moved to the same device and dtype as
+        the reference tensor.
         """
 
         if sentiment_reversal is not None:
@@ -590,30 +567,18 @@ class MultimodalHateSpeechModel(nn.Module):
                     "sentiment_reversal is not supplied."
                 )
 
-            reversal = self.sentiment_module(
-                texts
-            )
+            reversal = self.sentiment_module(texts)
 
-        if not isinstance(
+        self._validate_signal(
             reversal,
-            Tensor,
-        ):
-            raise TypeError(
-                "sentiment_reversal must be a "
-                "torch.Tensor."
-            )
+            batch_size,
+            "sentiment_reversal",
+        )
 
-        if reversal.ndim != 2:
-            raise ValueError(
-                "sentiment_reversal must have "
-                "shape [B, 1]."
-            )
-
-        if reversal.size(1) != 1:
-            raise ValueError(
-                "sentiment_reversal must have "
-                "shape [B, 1]."
-            )
+        reversal = reversal.to(
+            device=reference_tensor.device,
+            dtype=reference_tensor.dtype,
+        )
 
         return reversal
 
@@ -629,51 +594,63 @@ class MultimodalHateSpeechModel(nn.Module):
         sentiment_reversal: Optional[Tensor] = None,
     ) -> MultimodalHateSpeechOutput:
         """
-        Run the complete multimodal model.
+        Run the complete sarcasm-aware multimodal model.
 
         Parameters
         ----------
         images:
-            Image tensor [B, 3, H, W].
+            Image tensor:
+
+                [B, 3, H, W]
 
         texts:
             OCR/template text strings.
 
         sarcasm_probability:
-            Optional externally supplied sarcasm probability
-            [B, 1].
+            Optional externally supplied sarcasm probability:
+
+                [B, 1]
 
             If omitted, SarcasmBERT is used.
 
         sentiment_reversal:
-            Optional externally supplied sentiment-reversal signal
-            [B, 1].
+            Optional externally supplied sentiment-reversal signal:
+
+                [B, 1]
 
             If omitted, SentimentReversal is used.
 
         Returns
         -------
         MultimodalHateSpeechOutput
-            Complete model output.
+            Complete multimodal model output.
         """
 
-        # --------------------------------------------------------
-        # Input validation
-        # --------------------------------------------------------
+        # ========================================================
+        # INPUT VALIDATION
+        # ========================================================
 
-        self._validate_images(
-            images
-        )
+        self._validate_images(images)
 
         batch_size = images.size(0)
 
         # ========================================================
-        # 1. ViT image tokens
+        # 1. ViT IMAGE TOKENS
+        #
+        # [B, N_img, 1024]
         # ========================================================
 
         image_tokens_raw = self.image_encoder(
             images
         )
+
+        if not isinstance(
+            image_tokens_raw,
+            Tensor,
+        ):
+            raise TypeError(
+                "Image encoder must return a torch.Tensor."
+            )
 
         if image_tokens_raw.ndim != 3:
             raise ValueError(
@@ -689,7 +666,9 @@ class MultimodalHateSpeechModel(nn.Module):
         )
 
         # ========================================================
-        # 2. HateBERT text tokens
+        # 2. HATEBERT TOKEN REPRESENTATIONS
+        #
+        # [B, N_txt, 768]
         #
         # IMPORTANT:
         #
@@ -697,9 +676,11 @@ class MultimodalHateSpeechModel(nn.Module):
         #
         #     self.text_encoder(texts)
         #
-        # because HateBERT.forward() returns [B, 768].
+        # because that returns:
         #
-        # Fusion needs:
+        #     [B, 768]
+        #
+        # Fusion requires:
         #
         #     [B, N_txt, 768]
         #
@@ -717,7 +698,19 @@ class MultimodalHateSpeechModel(nn.Module):
         )
 
         # ========================================================
-        # 3. Project image/text tokens into shared 512-D space
+        # 3. PROJECTION / MODALITY ALIGNMENT
+        #
+        # Image:
+        #
+        #     [B, N_img, 1024]
+        #             ↓
+        #     [B, N_img, 512]
+        #
+        # Text:
+        #
+        #     [B, N_txt, 768]
+        #             ↓
+        #     [B, N_txt, 512]
         # ========================================================
 
         image_tokens, text_tokens = self.projection(
@@ -751,8 +744,24 @@ class MultimodalHateSpeechModel(nn.Module):
             "projected text tokens",
         )
 
+        if image_tokens.size(-1) != self.fusion_dim:
+            raise ValueError(
+                "Projected image token dimension does not "
+                f"match fusion_dim={self.fusion_dim}. "
+                f"Got {image_tokens.size(-1)}."
+            )
+
+        if text_tokens.size(-1) != self.fusion_dim:
+            raise ValueError(
+                "Projected text token dimension does not "
+                f"match fusion_dim={self.fusion_dim}. "
+                f"Got {text_tokens.size(-1)}."
+            )
+
         # ========================================================
-        # 4. CLIP image representation
+        # 4. CLIP IMAGE REPRESENTATION
+        #
+        # [B, 512]
         # ========================================================
 
         clip_image = self.clip_image_encoder(
@@ -789,7 +798,9 @@ class MultimodalHateSpeechModel(nn.Module):
         )
 
         # ========================================================
-        # 5. CLIP text representation
+        # 5. CLIP TEXT REPRESENTATION
+        #
+        # [B, 512]
         # ========================================================
 
         clip_text = self.clip_text_encoder(
@@ -826,7 +837,15 @@ class MultimodalHateSpeechModel(nn.Module):
         )
 
         # ========================================================
-        # 6. Visual-text incongruity
+        # 6. VISUAL-TEXT INCONGRUITY
+        #
+        # CLIP image + CLIP text
+        #       ↓
+        # semantic dissimilarity
+        #       ↓
+        # learned incongruity score
+        #
+        # [B, 1]
         # ========================================================
 
         incongruity_score = self.incongruity(
@@ -834,71 +853,65 @@ class MultimodalHateSpeechModel(nn.Module):
             clip_text,
         )
 
-        if incongruity_score.ndim != 2:
-            raise ValueError(
-                "Incongruity module must return "
-                "[B, 1]. "
-                f"Got {tuple(incongruity_score.shape)}."
-            )
-
-        if incongruity_score.size(1) != 1:
-            raise ValueError(
-                "Incongruity module must return "
-                "[B, 1]."
-            )
-
-        self._validate_batch_size(
-            batch_size,
+        self._validate_signal(
             incongruity_score,
-            "incongruity score",
+            batch_size,
+            "incongruity_score",
+        )
+
+        # Make sure the signal is compatible with the projected
+        # multimodal representation.
+        incongruity_score = incongruity_score.to(
+            device=image_tokens.device,
+            dtype=image_tokens.dtype,
         )
 
         # ========================================================
-        # 7. Sarcasm probability
+        # 7. SARCASM PROBABILITY
+        #
+        # [B, 1]
         # ========================================================
 
         sarcasm_probability = (
             self._compute_sarcasm_probability(
-                texts,
-                sarcasm_probability,
+                texts=texts,
+                sarcasm_probability=sarcasm_probability,
+                batch_size=batch_size,
+                reference_tensor=image_tokens,
             )
         )
 
-        self._validate_batch_size(
-            batch_size,
-            sarcasm_probability,
-            "sarcasm probability",
-        )
-
         # ========================================================
-        # 8. Sentiment reversal
+        # 8. SENTIMENT REVERSAL
+        #
+        # [B, 1]
         # ========================================================
 
         sentiment_reversal = (
             self._compute_sentiment_reversal(
-                texts,
-                sentiment_reversal,
+                texts=texts,
+                sentiment_reversal=sentiment_reversal,
+                batch_size=batch_size,
+                reference_tensor=image_tokens,
             )
         )
 
-        self._validate_batch_size(
-            batch_size,
-            sentiment_reversal,
-            "sentiment reversal",
-        )
-
         # ========================================================
-        # 9. Sarcasm gate
+        # 9. SARCASM GATE
         #
-        # Inputs:
+        # Three signals:
         #
-        #     sarcasm probability
-        #     incongruity
-        #     sentiment reversal
+        #   sarcasm probability
+        #   incongruity score
+        #   sentiment reversal
         #
-        # Output:
+        #             ↓
         #
-        #     [B, gate_dim]
+        #   SarcasmGate
+        #
+        #             ↓
+        #
+        #   [B, gate_dim]
         # ========================================================
 
         sarcasm_gate = self.sarcasm_gate(
@@ -906,6 +919,14 @@ class MultimodalHateSpeechModel(nn.Module):
             incongruity_score,
             sentiment_reversal,
         )
+
+        if not isinstance(
+            sarcasm_gate,
+            Tensor,
+        ):
+            raise TypeError(
+                "SarcasmGate must return a torch.Tensor."
+            )
 
         if sarcasm_gate.ndim != 2:
             raise ValueError(
@@ -928,7 +949,23 @@ class MultimodalHateSpeechModel(nn.Module):
         )
 
         # ========================================================
-        # 10. Sarcasm-aware cross-modal fusion
+        # 10. SARCASM-AWARE CROSS-MODAL FUSION
+        #
+        # Image tokens
+        # Text tokens
+        # Sarcasm gate
+        #
+        #        ↓
+        #
+        # 4-layer transformer
+        #
+        #        ↓
+        #
+        # fused_tokens:
+        # [B, N_img + N_txt, 512]
+        #
+        # pooled:
+        # [B, 512]
         # ========================================================
 
         fused_tokens, pooled = self.fusion(
@@ -936,6 +973,24 @@ class MultimodalHateSpeechModel(nn.Module):
             text_tokens,
             sarcasm_gate,
         )
+
+        if not isinstance(
+            fused_tokens,
+            Tensor,
+        ):
+            raise TypeError(
+                "Fusion transformer must return "
+                "fused tokens as a torch.Tensor."
+            )
+
+        if not isinstance(
+            pooled,
+            Tensor,
+        ):
+            raise TypeError(
+                "Fusion transformer must return "
+                "pooled representation as a torch.Tensor."
+            )
 
         if fused_tokens.ndim != 3:
             raise ValueError(
@@ -971,32 +1026,54 @@ class MultimodalHateSpeechModel(nn.Module):
             )
 
         # ========================================================
-        # 11. Multitask classification
+        # 11. MULTITASK CLASSIFICATION
+        #
+        # pooled [B, 512]
+        #
+        #             ↓
+        #
+        # ┌─────────────────────────────┐
+        # │ Hate       → [B, 2]         │
+        # │ Sarcasm    → [B, 2]         │
+        # │ Target     → [B, 5]         │
+        # └─────────────────────────────┘
         # ========================================================
 
         logits = self.classification_heads(
             pooled
         )
 
-        # Validate expected classification outputs.
-
-        if "hate" not in logits:
-            raise ValueError(
+        if not isinstance(
+            logits,
+            dict,
+        ):
+            raise TypeError(
                 "Classification heads must return "
-                "'hate' logits."
+                "a dictionary of logits."
             )
 
-        if "sarcasm" not in logits:
-            raise ValueError(
-                "Classification heads must return "
-                "'sarcasm' logits."
-            )
+        required_heads = (
+            "hate",
+            "sarcasm",
+            "target",
+        )
 
-        if "target" not in logits:
-            raise ValueError(
-                "Classification heads must return "
-                "'target' logits."
-            )
+        for head_name in required_heads:
+
+            if head_name not in logits:
+                raise ValueError(
+                    "Classification heads must return "
+                    f"'{head_name}' logits."
+                )
+
+            if not isinstance(
+                logits[head_name],
+                Tensor,
+            ):
+                raise TypeError(
+                    f"'{head_name}' logits must be "
+                    "a torch.Tensor."
+                )
 
         if logits["hate"].shape != (
             batch_size,
@@ -1026,21 +1103,21 @@ class MultimodalHateSpeechModel(nn.Module):
             )
 
         # ========================================================
-        # 12. Contrastive representations
+        # 12. CONTRASTIVE REPRESENTATIONS
         #
-        # Mean-pool projected image/text tokens.
+        # Projected image tokens:
         #
-        # Image:
         #     [B, N_img, 512]
-        #          ↓
+        #             ↓ mean
         #     [B, 512]
         #
-        # Text:
+        # Projected text tokens:
+        #
         #     [B, N_txt, 512]
-        #          ↓
+        #             ↓ mean
         #     [B, 512]
         #
-        # These are consumed by NT-Xent.
+        # Used by NT-Xent contrastive loss.
         # ========================================================
 
         image_representation = image_tokens.mean(
@@ -1051,8 +1128,38 @@ class MultimodalHateSpeechModel(nn.Module):
             dim=1
         )
 
+        if image_representation.ndim != 2:
+            raise ValueError(
+                "Image contrastive representation must "
+                "have shape [B, fusion_dim]."
+            )
+
+        if text_representation.ndim != 2:
+            raise ValueError(
+                "Text contrastive representation must "
+                "have shape [B, fusion_dim]."
+            )
+
+        if image_representation.shape != (
+            batch_size,
+            self.fusion_dim,
+        ):
+            raise ValueError(
+                "Unexpected image contrastive representation "
+                f"shape: {tuple(image_representation.shape)}."
+            )
+
+        if text_representation.shape != (
+            batch_size,
+            self.fusion_dim,
+        ):
+            raise ValueError(
+                "Unexpected text contrastive representation "
+                f"shape: {tuple(text_representation.shape)}."
+            )
+
         # ========================================================
-        # 13. Return complete model output
+        # 13. RETURN COMPLETE OUTPUT
         # ========================================================
 
         return MultimodalHateSpeechOutput(
