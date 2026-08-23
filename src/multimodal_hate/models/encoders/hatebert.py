@@ -5,7 +5,14 @@ from .base import BaseEncoder
 
 
 class HateBERTEncoder(BaseEncoder):
-    """HateBERT encoder for structured OCR text and metadata."""
+    """HateBERT encoder for structured OCR text and metadata.
+
+    The default forward() API remains backward-compatible and returns
+    the [CLS] representation with shape [B, 768].
+
+    encode_tokens() exposes the complete token sequence with shape
+    [B, N_txt, 768] for multimodal transformer fusion.
+    """
 
     def __init__(
         self,
@@ -19,8 +26,8 @@ class HateBERTEncoder(BaseEncoder):
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
         self.model = AutoModel.from_pretrained(model_name)
 
-    def forward(self, text):
-        """Encode text and return the [CLS] representation."""
+    def _tokenize(self, text):
+        """Tokenize text and move tensors to the model device."""
 
         encoded = self.tokenizer(
             text,
@@ -30,11 +37,37 @@ class HateBERTEncoder(BaseEncoder):
             return_tensors="pt",
         )
 
-        encoded = {
-            key: value.to(self.model.device)
+        device = next(self.model.parameters()).device
+
+        return {
+            key: value.to(device)
             for key, value in encoded.items()
         }
+
+    def forward(self, text) -> torch.Tensor:
+        """Return the [CLS] representation.
+
+        Returns:
+            Tensor of shape [B, 768].
+        """
+
+        encoded = self._tokenize(text)
 
         outputs = self.model(**encoded)
 
         return outputs.last_hidden_state[:, 0, :]
+
+    def encode_tokens(self, text) -> torch.Tensor:
+        """Return the complete HateBERT token sequence.
+
+        This interface is used by the multimodal fusion transformer.
+
+        Returns:
+            Tensor of shape [B, N_txt, 768].
+        """
+
+        encoded = self._tokenize(text)
+
+        outputs = self.model(**encoded)
+
+        return outputs.last_hidden_state
