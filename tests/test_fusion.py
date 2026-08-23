@@ -6,6 +6,14 @@ from multimodal_hate.models.fusion.projection import (
     ProjectionAlignment,
 )
 
+from multimodal_hate.models.fusion.sarcasm_bias import (
+    SarcasmConditionedAttentionBias,
+)
+
+
+# ============================================================
+# PROJECTION TESTS
+# ============================================================
 
 def test_image_projection_shape():
     """1024-dimensional image tokens should become 512-dimensional."""
@@ -184,3 +192,190 @@ def test_projection_rejects_non_3d_image_input():
 
     with pytest.raises(ValueError):
         module(image)
+
+
+# ============================================================
+# SARCASM-CONDITIONED ATTENTION BIAS TESTS
+# ============================================================
+
+def test_sarcasm_bias_shape():
+    """Sarcasm gate should become one bias value per attention head."""
+    module = SarcasmConditionedAttentionBias(
+        gate_dim=64,
+        num_heads=8,
+    )
+
+    sarcasm_gate = torch.randn(4, 64)
+
+    bias = module(sarcasm_gate)
+
+    assert bias.shape == (4, 8, 1, 1)
+
+
+def test_sarcasm_bias_works_with_non_512_gate_dimension():
+    """Gate dimension must remain independent of fusion dimension."""
+    module = SarcasmConditionedAttentionBias(
+        gate_dim=37,
+        num_heads=8,
+    )
+
+    sarcasm_gate = torch.randn(2, 37)
+
+    bias = module(sarcasm_gate)
+
+    assert bias.shape == (2, 8, 1, 1)
+
+
+def test_sarcasm_bias_broadcasts_to_attention_logits():
+    """The bias must broadcast across query and key positions."""
+    module = SarcasmConditionedAttentionBias(
+        gate_dim=64,
+        num_heads=8,
+    )
+
+    sarcasm_gate = torch.randn(2, 64)
+
+    attention_logits = torch.randn(
+        2,
+        8,
+        10,
+        20,
+    )
+
+    output = module.apply(
+        attention_logits,
+        sarcasm_gate,
+    )
+
+    assert output.shape == attention_logits.shape
+
+
+def test_sarcasm_bias_changes_attention_logits():
+    """Adding a non-zero learned bias should modify the logits."""
+    module = SarcasmConditionedAttentionBias(
+        gate_dim=64,
+        num_heads=8,
+    )
+
+    sarcasm_gate = torch.randn(2, 64)
+
+    attention_logits = torch.zeros(
+        2,
+        8,
+        10,
+        20,
+    )
+
+    output = module.apply(
+        attention_logits,
+        sarcasm_gate,
+    )
+
+    assert not torch.allclose(
+        output,
+        attention_logits,
+    )
+
+
+def test_sarcasm_bias_gradient_flow():
+    """Gradients must flow from attention bias back into the gate."""
+    module = SarcasmConditionedAttentionBias(
+        gate_dim=64,
+        num_heads=8,
+    )
+
+    sarcasm_gate = torch.randn(
+        2,
+        64,
+        requires_grad=True,
+    )
+
+    bias = module(sarcasm_gate)
+
+    loss = bias.mean()
+
+    loss.backward()
+
+    assert sarcasm_gate.grad is not None
+
+    assert module.projection.weight.grad is not None
+    assert module.projection.bias.grad is not None
+
+
+def test_sarcasm_bias_rejects_wrong_gate_shape():
+    """Gate must have shape [B, d]."""
+    module = SarcasmConditionedAttentionBias(
+        gate_dim=64,
+        num_heads=8,
+    )
+
+    sarcasm_gate = torch.randn(
+        2,
+        5,
+        64,
+    )
+
+    with pytest.raises(ValueError):
+        module(sarcasm_gate)
+
+
+def test_sarcasm_bias_rejects_wrong_gate_dimension():
+    """Incorrect gate dimension must fail clearly."""
+    module = SarcasmConditionedAttentionBias(
+        gate_dim=64,
+        num_heads=8,
+    )
+
+    sarcasm_gate = torch.randn(
+        2,
+        32,
+    )
+
+    with pytest.raises(ValueError):
+        module(sarcasm_gate)
+
+
+def test_sarcasm_bias_rejects_wrong_attention_head_count():
+    """Attention logits must use the configured number of heads."""
+    module = SarcasmConditionedAttentionBias(
+        gate_dim=64,
+        num_heads=8,
+    )
+
+    sarcasm_gate = torch.randn(2, 64)
+
+    attention_logits = torch.randn(
+        2,
+        4,
+        10,
+        20,
+    )
+
+    with pytest.raises(ValueError):
+        module.apply(
+            attention_logits,
+            sarcasm_gate,
+        )
+
+
+def test_sarcasm_bias_rejects_batch_mismatch():
+    """Attention logits and gate must have the same batch size."""
+    module = SarcasmConditionedAttentionBias(
+        gate_dim=64,
+        num_heads=8,
+    )
+
+    sarcasm_gate = torch.randn(3, 64)
+
+    attention_logits = torch.randn(
+        2,
+        8,
+        10,
+        20,
+    )
+
+    with pytest.raises(ValueError):
+        module.apply(
+            attention_logits,
+            sarcasm_gate,
+        )
