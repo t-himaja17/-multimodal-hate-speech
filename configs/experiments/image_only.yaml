@@ -1,1 +1,11 @@
+experiment:
+  name: image_only
+  description: Ablation using only the image modality
 
+model:
+  use_sarcasm: false
+  use_cross_attention: false
+  use_contrastive_loss: false
+  use_ocr: false
+  use_text: false
+  use_image: true

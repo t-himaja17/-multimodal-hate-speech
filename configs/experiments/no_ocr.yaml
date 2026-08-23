@@ -1,1 +1,11 @@
+experiment:
+  name: no_ocr
+  description: Ablation without OCR text
 
+model:
+  use_sarcasm: true
+  use_cross_attention: true
+  use_contrastive_loss: true
+  use_ocr: false
+  use_text: true
+  use_image: true

@@ -1,1 +1,11 @@
+experiment:
+  name: no_sarcasm
+  description: Ablation without sarcasm conditioning
 
+model:
+  use_sarcasm: false
+  use_cross_attention: true
+  use_contrastive_loss: true
+  use_ocr: true
+  use_text: true
+  use_image: true

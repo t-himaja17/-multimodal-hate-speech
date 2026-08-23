@@ -1,1 +1,11 @@
+experiment:
+  name: no_cross_attention
+  description: Ablation without cross-modal attention
 
+model:
+  use_sarcasm: true
+  use_cross_attention: false
+  use_contrastive_loss: true
+  use_ocr: true
+  use_text: true
+  use_image: true
