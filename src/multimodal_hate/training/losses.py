@@ -27,7 +27,19 @@ import torch.nn.functional as F
 
 class BinaryClassificationLoss(nn.Module):
     """
-    Binary cross-entropy loss operating on logits.
+    Binary cross-entropy loss operating on one-hot targets.
+
+    Valid binary labels:
+
+        [1, 0] -> class 0
+        [0, 1] -> class 1
+
+    Missing labels:
+
+        [0, 0]
+
+    Missing labels are ignored instead of being treated as
+    negative examples.
 
     BCEWithLogitsLoss is used so sigmoid and BCE are combined
     into one numerically stable operation.
@@ -36,7 +48,9 @@ class BinaryClassificationLoss(nn.Module):
     def __init__(self) -> None:
         super().__init__()
 
-        self.loss = nn.BCEWithLogitsLoss()
+        self.loss = nn.BCEWithLogitsLoss(
+            reduction="none"
+        )
 
     def forward(
         self,
@@ -50,7 +64,25 @@ class BinaryClassificationLoss(nn.Module):
                 f"{tuple(targets.shape)}."
             )
 
-        return self.loss(logits, targets.float())
+        targets = targets.float()
+
+        # A valid one-hot binary label has exactly one positive
+        # entry. [0, 0] means that the label is unavailable.
+        valid = targets.sum(dim=1) > 0
+
+        # If this task has no labels in the current batch,
+        # return zero while preserving the computation graph.
+        if not torch.any(valid):
+            return logits.sum() * 0.0
+
+        elementwise_loss = self.loss(
+            logits,
+            targets,
+        )
+
+        valid_loss = elementwise_loss[valid]
+
+        return valid_loss.mean()
 
 
 class MultiLabelBCELoss(BinaryClassificationLoss):
@@ -64,6 +96,9 @@ class MultiLabelBCELoss(BinaryClassificationLoss):
         gender
         disability
         sexuality
+
+    A sample with no target-group annotations is represented
+    by an all-zero target vector and is ignored.
     """
 
     pass
@@ -235,7 +270,9 @@ class MultimodalTotalLoss(nn.Module):
         self.target_weight = target_weight
 
         self.hate_loss = BinaryClassificationLoss()
+
         self.sarcasm_loss = BinaryClassificationLoss()
+
         self.target_loss = MultiLabelBCELoss()
 
         self.contrastive_loss = NTXentLoss(
