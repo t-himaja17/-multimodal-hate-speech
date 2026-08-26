@@ -3,32 +3,42 @@ Evaluation entry point for the multimodal hate-speech model.
 
 Member 4 ownership.
 
-This script:
-    1. Loads Hateful Memes dev/test data.
-    2. Builds the same model architecture used during training.
-    3. Loads a trained checkpoint.
-    4. Runs evaluation.
-    5. Prints the configured classification metrics.
-
-IMPORTANT:
-    This script does NOT train the model.
-
 Examples:
 
-    Evaluate best checkpoint on dev:
-        python scripts/evaluate.py --checkpoint artifacts/checkpoints/best.pt --split dev
+    Show help:
+        python scripts/evaluate.py --help
 
-    Evaluate best checkpoint on test:
-        python scripts/evaluate.py --checkpoint artifacts/checkpoints/best.pt --split test
+    Evaluate best checkpoint:
+        python scripts/evaluate.py --checkpoint artifacts/checkpoints/best.pt
 
-    Force CPU:
-        python scripts/evaluate.py --checkpoint artifacts/checkpoints/best.pt --split dev --device cpu
+    Evaluate latest checkpoint:
+        python scripts/evaluate.py --checkpoint artifacts/checkpoints/latest.pt
 """
 
 from __future__ import annotations
 
 import argparse
 import random
+import sys
+from pathlib import Path
+
+# ============================================================
+# PROJECT PATH
+# ============================================================
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+SRC_ROOT = PROJECT_ROOT / "src"
+
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+if str(SRC_ROOT) not in sys.path:
+    sys.path.insert(0, str(SRC_ROOT))
+
+
+# ============================================================
+# THIRD-PARTY IMPORTS
+# ============================================================
 
 import numpy as np
 import torch
@@ -37,18 +47,31 @@ from transformers import (
     AutoTokenizer,
 )
 
+
+# ============================================================
+# PROJECT IMPORTS
+# ============================================================
+
 from scripts.prepare_data import create_dataloaders
+
+from src.multimodal_hate.evaluation.evaluator import (
+    MultimodalEvaluator,
+)
+
 from src.multimodal_hate.models.multimodal_model import (
     MultimodalHateSpeechModel,
 )
+
 from src.multimodal_hate.models.sarcasm.sarcasm_bert import (
     SarcasmBERT,
 )
+
 from src.multimodal_hate.models.sarcasm.sentiment import (
     SentimentReversal,
 )
-from src.multimodal_hate.evaluation.evaluator import (
-    MultimodalEvaluator,
+
+from src.multimodal_hate.training.trainer import (
+    MultimodalTrainer,
 )
 
 
@@ -79,15 +102,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--checkpoint",
         type=str,
-        required=True,
-        help="Path to a trained checkpoint.",
-    )
-
-    parser.add_argument(
-        "--split",
-        choices=["dev", "test"],
-        default="dev",
-        help="Dataset split to evaluate.",
+        default="artifacts/checkpoints/best.pt",
+        help="Path to model checkpoint.",
     )
 
     parser.add_argument(
@@ -116,6 +132,13 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=0.5,
         help="Binary classification threshold.",
+    )
+
+    parser.add_argument(
+        "--split",
+        choices=["train", "dev", "test"],
+        default="test",
+        help="Dataset split to evaluate.",
     )
 
     return parser.parse_args()
@@ -154,7 +177,7 @@ def resolve_device(
 def create_sarcasm_encoder(
     device: torch.device,
 ) -> SarcasmBERT:
-    """Create the same sarcasm encoder used during training."""
+    """Create the sarcasm encoder used during training."""
 
     model_name = "bert-base-uncased"
 
@@ -183,7 +206,7 @@ def create_sarcasm_encoder(
 def create_sentiment_module(
     device: torch.device,
 ) -> SentimentReversal:
-    """Create the same sentiment module used during training."""
+    """Create the sentiment-reversal module used during training."""
 
     model_name = (
         "distilbert-base-uncased-finetuned-sst-2-english"
@@ -193,8 +216,10 @@ def create_sentiment_module(
         model_name
     )
 
-    model = AutoModelForSequenceClassification.from_pretrained(
-        model_name
+    model = (
+        AutoModelForSequenceClassification.from_pretrained(
+            model_name
+        )
     )
 
     model.to(device)
@@ -217,7 +242,7 @@ def create_sentiment_module(
 def create_model(
     device: torch.device,
 ) -> MultimodalHateSpeechModel:
-    """Create the same model architecture used during training."""
+    """Create the project multimodal model."""
 
     sarcasm_encoder = create_sarcasm_encoder(
         device
@@ -243,6 +268,116 @@ def create_model(
 
 
 # ============================================================
+# OPTIMIZER
+# ============================================================
+
+def create_optimizer(
+    model: torch.nn.Module,
+) -> torch.optim.Optimizer:
+    """Create optimizer required by checkpoint loader."""
+
+    return torch.optim.AdamW(
+        model.parameters(),
+        lr=1e-4,
+    )
+
+
+# ============================================================
+# CHECKPOINT
+# ============================================================
+
+def load_checkpoint(
+    trainer: MultimodalTrainer,
+    checkpoint_path: str,
+) -> dict:
+    """Load a saved training checkpoint."""
+
+    path = Path(checkpoint_path)
+
+    if not path.is_file():
+        raise FileNotFoundError(
+            f"Checkpoint not found: {path}"
+        )
+
+    print()
+    print("Loading checkpoint:")
+    print(path)
+
+    checkpoint = trainer.load_checkpoint(
+        path
+    )
+
+    print("CHECKPOINT: OK")
+
+    return checkpoint
+
+
+# ============================================================
+# DATA
+# ============================================================
+
+def select_dataloader(
+    train_loader,
+    dev_loader,
+    test_loader,
+    split: str,
+):
+    """Select the requested dataset split."""
+
+    if split == "train":
+        return train_loader
+
+    if split == "dev":
+        return dev_loader
+
+    return test_loader
+
+
+# ============================================================
+# REPORT
+# ============================================================
+
+def print_metrics(
+    results: dict,
+) -> None:
+    """Print evaluation metrics."""
+
+    metrics = results["metrics"]
+
+    print()
+    print("=" * 60)
+    print("EVALUATION RESULTS")
+    print("=" * 60)
+
+    for task_name, task_metrics in metrics.items():
+
+        print()
+        print(task_name.upper())
+
+        for metric_name, value in task_metrics.items():
+
+            if isinstance(value, float):
+
+                if np.isnan(value):
+                    print(
+                        f"  {metric_name}: NaN"
+                    )
+                else:
+                    print(
+                        f"  {metric_name}: "
+                        f"{value:.4f}"
+                    )
+
+            else:
+                print(
+                    f"  {metric_name}: {value}"
+                )
+
+    print()
+    print("=" * 60)
+
+
+# ============================================================
 # MAIN
 # ============================================================
 
@@ -250,17 +385,17 @@ def main() -> None:
 
     args = parse_args()
 
-    set_seed(args.seed)
+    if not 0.0 <= args.threshold <= 1.0:
+        raise ValueError(
+            "threshold must be between 0 and 1."
+        )
 
     if args.batch_size <= 0:
         raise ValueError(
             "batch-size must be greater than zero."
         )
 
-    if not 0.0 <= args.threshold <= 1.0:
-        raise ValueError(
-            "threshold must be between 0 and 1."
-        )
+    set_seed(args.seed)
 
     device = resolve_device(
         args.device
@@ -272,17 +407,17 @@ def main() -> None:
 
     print()
     print("Device:", device)
-    print("Split:", args.split)
     print("Batch size:", args.batch_size)
-    print("Checkpoint:", args.checkpoint)
+    print("Split:", args.split)
     print("Threshold:", args.threshold)
+    print("Checkpoint:", args.checkpoint)
 
     # --------------------------------------------------------
     # DATA
     # --------------------------------------------------------
 
     print()
-    print("Loading data...")
+    print("Loading evaluation data...")
 
     train_loader, dev_loader, test_loader = (
         create_dataloaders(
@@ -291,14 +426,26 @@ def main() -> None:
         )
     )
 
-    if args.split == "dev":
-        evaluation_loader = dev_loader
-    else:
-        evaluation_loader = test_loader
+    print(
+        "Train samples:",
+        len(train_loader.dataset),
+    )
 
     print(
-        "Evaluation samples:",
-        len(evaluation_loader.dataset),
+        "Dev samples:",
+        len(dev_loader.dataset),
+    )
+
+    print(
+        "Test samples:",
+        len(test_loader.dataset),
+    )
+
+    evaluation_loader = select_dataloader(
+        train_loader,
+        dev_loader,
+        test_loader,
+        args.split,
     )
 
     # --------------------------------------------------------
@@ -318,28 +465,22 @@ def main() -> None:
     # OPTIMIZER
     # --------------------------------------------------------
 
-    optimizer = torch.optim.AdamW(
-        model.parameters(),
-        lr=1e-4,
+    optimizer = create_optimizer(
+        model
     )
 
     # --------------------------------------------------------
     # TRAINER
-    #
-    # We use the existing Trainer only for its checkpoint
-    # loading implementation.
     # --------------------------------------------------------
-
-    from src.multimodal_hate.training.trainer import (
-        MultimodalTrainer,
-    )
 
     trainer = MultimodalTrainer(
         model=model,
         optimizer=optimizer,
         device=device,
         gradient_accumulation_steps=1,
-        mixed_precision=False,
+        mixed_precision=(
+            device.type == "cuda"
+        ),
         gradient_clipping=1.0,
         checkpoint_dir="artifacts/checkpoints",
     )
@@ -347,22 +488,13 @@ def main() -> None:
     print("TRAINER: OK")
 
     # --------------------------------------------------------
-    # CHECKPOINT
+    # LOAD CHECKPOINT
     # --------------------------------------------------------
 
-    print()
-    print("Loading checkpoint...")
-
-    checkpoint = trainer.load_checkpoint(
-        args.checkpoint
+    load_checkpoint(
+        trainer,
+        args.checkpoint,
     )
-
-    print(
-        "Checkpoint epoch:",
-        checkpoint.get("epoch"),
-    )
-
-    print("CHECKPOINT: OK")
 
     # --------------------------------------------------------
     # EVALUATOR
@@ -377,56 +509,24 @@ def main() -> None:
     print("EVALUATOR: OK")
 
     # --------------------------------------------------------
-    # EVALUATION
+    # EVALUATE
     # --------------------------------------------------------
 
     print()
-    print("=" * 60)
-    print("RUNNING EVALUATION")
-    print("=" * 60)
+    print("Running evaluation...")
 
     results = evaluator.evaluate(
         evaluation_loader
     )
 
-    # --------------------------------------------------------
-    # RESULTS
-    # --------------------------------------------------------
+    print_metrics(
+        results
+    )
 
-    print()
-    print("=" * 60)
-    print("EVALUATION RESULTS")
-    print("=" * 60)
 
-    print()
-    print("HATE")
-    print("-" * 60)
-
-    for name, value in results["metrics"]["hate"].items():
-        print(
-            f"{name}: {value:.6f}"
-            if not np.isnan(value)
-            else f"{name}: NaN"
-        )
-
-    print()
-    print("SARCASM")
-    print("-" * 60)
-
-    for name, value in results["metrics"]["sarcasm"].items():
-        print(
-            f"{name}: {value:.6f}"
-            if not np.isnan(value)
-            else f"{name}: NaN"
-        )
-
-    print()
-    print("Predictions:", len(results["predictions"]["hate"]))
-    print("Evaluation complete.")
-
-    print()
-    print("=" * 60)
-
+# ============================================================
+# ENTRY POINT
+# ============================================================
 
 if __name__ == "__main__":
     main()
