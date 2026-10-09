@@ -13,7 +13,7 @@ Output sample:
         "text": str,
         "hate_target": Tensor [2],
         "sarcasm_target": Tensor [2],
-        "target_target": Tensor [5],
+        "target_target": Tensor [4],
         "sample_id": str,
     }
 
@@ -50,7 +50,7 @@ class MultimodalHateSpeechDataset(Dataset):
         Optional custom image transformation.
 
     target_groups:
-        Ordered target-group labels used for the five-dimensional
+        Ordered target-group labels used for the four-dimensional
         multi-label target vector.
     """
 
@@ -58,7 +58,6 @@ class MultimodalHateSpeechDataset(Dataset):
         "race",
         "religion",
         "gender",
-        "disability",
         "sexuality",
     )
 
@@ -69,8 +68,11 @@ class MultimodalHateSpeechDataset(Dataset):
         image_transform: Callable | None = None,
         target_groups: Sequence[str] | None = None,
     ) -> None:
+
         if not samples:
-            raise ValueError("samples must contain at least one sample.")
+            raise ValueError(
+                "samples must contain at least one sample."
+            )
 
         if image_size <= 0:
             raise ValueError(
@@ -86,9 +88,9 @@ class MultimodalHateSpeechDataset(Dataset):
 
         target_groups = tuple(target_groups)
 
-        if len(target_groups) != 5:
+        if len(target_groups) != 4:
             raise ValueError(
-                "Exactly five target groups are required."
+                "Exactly four target groups are required."
             )
 
         if len(set(target_groups)) != len(target_groups):
@@ -97,6 +99,10 @@ class MultimodalHateSpeechDataset(Dataset):
             )
 
         self.target_groups = target_groups
+
+    # ============================================================
+    # LENGTH
+    # ============================================================
 
     def __len__(self) -> int:
         return len(self.samples)
@@ -133,20 +139,20 @@ class MultimodalHateSpeechDataset(Dataset):
         if self.image_transform is not None:
             return self.image_transform(image)
 
-        # Basic default preprocessing.
-        #
-        # Resize while keeping the Dataset dependency-light.
         image = image.resize(
             (self.image_size, self.image_size),
             Image.Resampling.BICUBIC,
         )
 
-        # Convert PIL RGB image to float tensor [0, 1].
         tensor = torch.from_numpy(
             __import__("numpy").array(image)
         )
 
-        tensor = tensor.permute(2, 0, 1).float() / 255.0
+        tensor = tensor.permute(
+            2,
+            0,
+            1,
+        ).float() / 255.0
 
         return tensor
 
@@ -177,17 +183,10 @@ class MultimodalHateSpeechDataset(Dataset):
         """
         Convert a binary label into a two-class one-hot vector.
 
-        Valid labels:
+        0 -> [1, 0]
+        1 -> [0, 1]
 
-            0 -> [1, 0]
-            1 -> [0, 1]
-
-        Missing labels:
-
-            -1 -> [0, 0]
-
-        The -1 representation allows the training pipeline to
-        identify unavailable labels later.
+        Missing label -> [0, 0]
         """
 
         if label is None:
@@ -220,11 +219,15 @@ class MultimodalHateSpeechDataset(Dataset):
         sample: MultimodalSample,
     ) -> Tensor:
         """
-        Convert target-group information into a five-dimensional
+        Convert target-group information into a four-dimensional
         multi-hot vector.
 
-        Target group may be stored directly in target_group or in
-        metadata["target_group"] by the dataset loaders.
+        Supported groups:
+
+            race
+            religion
+            gender
+            sexuality
         """
 
         target = torch.zeros(
@@ -235,35 +238,49 @@ class MultimodalHateSpeechDataset(Dataset):
         group = sample.target_group
 
         if group is None:
-            group = sample.metadata.get("target_group")
+            group = sample.metadata.get(
+                "target_group"
+            )
 
         if group is None:
             return target
 
         if isinstance(group, str):
             groups = [group]
-        elif isinstance(group, (list, tuple, set)):
+
+        elif isinstance(
+            group,
+            (list, tuple, set),
+        ):
             groups = list(group)
+
         else:
             raise TypeError(
-                "target_group must be a string or sequence of strings."
+                "target_group must be a string "
+                "or sequence of strings."
             )
 
         group_to_index = {
             name.lower(): index
-            for index, name in enumerate(self.target_groups)
+            for index, name in enumerate(
+                self.target_groups
+            )
         }
 
         for item in groups:
+
             if not isinstance(item, str):
                 raise TypeError(
-                    "Every target-group label must be a string."
+                    "Every target-group label must "
+                    "be a string."
                 )
 
             normalized = item.strip().lower()
 
             if normalized in group_to_index:
-                target[group_to_index[normalized]] = 1.0
+                target[
+                    group_to_index[normalized]
+                ] = 1.0
 
         return target
 
@@ -316,31 +333,15 @@ class MultimodalHateSpeechDataset(Dataset):
         }
 
 
+# ============================================================
+# COLLATE
+# ============================================================
+
 def multimodal_collate_fn(
     batch: list[dict[str, object]],
 ) -> dict[str, object]:
     """
     Collate Dataset samples into a model-ready batch.
-
-    Returns:
-
-        image:
-            [B, 3, 224, 224]
-
-        text:
-            list[str]
-
-        hate_target:
-            [B, 2]
-
-        sarcasm_target:
-            [B, 2]
-
-        target_target:
-            [B, 5]
-
-        sample_id:
-            list[str]
     """
 
     if not batch:

@@ -1,55 +1,109 @@
-"""
-Loss functions for the multimodal hate-speech model.
-
-Member 4 ownership.
-
-Configured losses:
-    - Hate classification: BCE
-    - Sarcasm classification: BCE
-    - Target groups: Multi-label BCE
-    - Contrastive alignment: NT-Xent
-
-Total loss:
-
-    L_total =
-        L_hate
-        + 0.3 * L_sarcasm
-        + 0.1 * L_contrastive
-        + 0.2 * L_target
-"""
-
 from __future__ import annotations
 
+from typing import Dict
+
 import torch
-from torch import Tensor, nn
+import torch.nn as nn
+from torch import Tensor
 import torch.nn.functional as F
 
 
 class BinaryClassificationLoss(nn.Module):
     """
-    Binary cross-entropy loss operating on one-hot targets.
+    Two-class cross-entropy loss for one-hot binary targets.
 
-    Valid binary labels:
+    Label encoding:
+        0 -> [1, 0]
+        1 -> [0, 1]
+        None -> [0, 0]
 
-        [1, 0] -> class 0
-        [0, 1] -> class 1
-
-    Missing labels:
-
-        [0, 0]
-
-    Missing labels are ignored instead of being treated as
-    negative examples.
-
-    BCEWithLogitsLoss is used so sigmoid and BCE are combined
-    into one numerically stable operation.
+    Missing-label samples are ignored.
+    positive_weight applies only to class 1.
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        positive_weight: float = 1.0,
+    ) -> None:
         super().__init__()
 
-        self.loss = nn.BCEWithLogitsLoss(
-            reduction="none"
+        if positive_weight <= 0:
+            raise ValueError(
+                "positive_weight must be greater than zero."
+            )
+
+        self.positive_weight = float(positive_weight)
+
+    def forward(
+        self,
+        logits: Tensor,
+        targets: Tensor,
+    ) -> Tensor:
+        if logits.shape != targets.shape:
+            raise ValueError(
+                "logits and targets must have the same shape. "
+                f"Got {tuple(logits.shape)} and "
+                f"{tuple(targets.shape)}."
+            )
+
+        if logits.ndim != 2 or logits.shape[1] != 2:
+            raise ValueError(
+                "BinaryClassificationLoss expects logits "
+                "and one-hot targets with shape [batch_size, 2]."
+            )
+
+        targets = targets.to(
+            device=logits.device,
+            dtype=logits.dtype,
+        )
+
+        # [0, 0] denotes a missing label.
+        valid = targets.sum(dim=1) > 0
+
+        if not torch.any(valid):
+            return logits.sum() * 0.0
+
+        # Convert [1, 0] -> 0 and [0, 1] -> 1.
+        labels = targets.argmax(dim=1).long()
+
+        # Weight class 1 only; class 0 remains weight 1.
+        class_weights = torch.tensor(
+            [1.0, self.positive_weight],
+            device=logits.device,
+            dtype=logits.dtype,
+        )
+
+        per_sample_loss = F.cross_entropy(
+            logits[valid],
+            labels[valid],
+            weight=class_weights,
+            reduction="none",
+        )
+
+        return per_sample_loss.mean()
+
+
+class MultiLabelBCELoss(nn.Module):
+    """
+    Multi-label BCE loss for target groups.
+
+    Samples with no target annotations are ignored.
+    """
+
+    def __init__(
+        self,
+        positive_weight: float = 1.0,
+    ) -> None:
+        super().__init__()
+
+        if positive_weight <= 0:
+            raise ValueError(
+                "positive_weight must be greater than zero."
+            )
+
+        self.register_buffer(
+            "positive_weight",
+            torch.tensor(float(positive_weight)),
         )
 
     def forward(
@@ -64,59 +118,40 @@ class BinaryClassificationLoss(nn.Module):
                 f"{tuple(targets.shape)}."
             )
 
-        targets = targets.float()
+        if logits.ndim != 2:
+            raise ValueError(
+                "MultiLabelBCELoss expects [batch_size, num_labels]."
+            )
 
-        # A valid one-hot binary label has exactly one positive
-        # entry. [0, 0] means that the label is unavailable.
+        targets = targets.to(
+            device=logits.device,
+            dtype=logits.dtype,
+        )
+
+        # Preserve the project's missing-annotation convention.
         valid = targets.sum(dim=1) > 0
 
-        # If this task has no labels in the current batch,
-        # return zero while preserving the computation graph.
         if not torch.any(valid):
             return logits.sum() * 0.0
 
-        elementwise_loss = self.loss(
-            logits,
-            targets,
+        positive_weight = self.positive_weight.to(
+            device=logits.device,
+            dtype=logits.dtype,
         )
 
-        valid_loss = elementwise_loss[valid]
-
-        return valid_loss.mean()
-
-
-class MultiLabelBCELoss(BinaryClassificationLoss):
-    """
-    Multi-label BCE loss.
-
-    Used for the five target groups:
-
-        race
-        religion
-        gender
-        disability
-        sexuality
-
-    A sample with no target-group annotations is represented
-    by an all-zero target vector and is ignored.
-    """
-
-    pass
+        return F.binary_cross_entropy_with_logits(
+            logits[valid],
+            targets[valid],
+            pos_weight=positive_weight,
+            reduction="mean",
+        )
 
 
 class NTXentLoss(nn.Module):
     """
-    Normalized Temperature-scaled Cross Entropy loss.
+    Normalized Temperature-scaled Cross Entropy.
 
-    This implementation aligns two modality representations.
-
-    Given:
-
-        z_a = modality A representations
-        z_b = modality B representations
-
-    samples at the same batch index are treated as positive
-    pairs, while the remaining batch samples are negatives.
+    Same-index image/text representations are positive pairs.
     """
 
     def __init__(
@@ -163,58 +198,44 @@ class NTXentLoss(nn.Module):
                 "NT-Xent requires a batch size of at least 2."
             )
 
-        z_a = F.normalize(
+        representation_a = F.normalize(
             representation_a,
             dim=-1,
         )
 
-        z_b = F.normalize(
+        representation_b = F.normalize(
             representation_b,
             dim=-1,
         )
 
         representations = torch.cat(
-            [
-                z_a,
-                z_b,
-            ],
+            [representation_a, representation_b],
             dim=0,
         )
 
         similarity = torch.matmul(
             representations,
-            representations.transpose(0, 1),
-        )
-
-        similarity = similarity / self.temperature
-
-        total_samples = 2 * batch_size
+            representations.T,
+        ) / self.temperature
 
         mask = torch.eye(
-            total_samples,
+            2 * batch_size,
             dtype=torch.bool,
             device=similarity.device,
         )
 
         similarity = similarity.masked_fill(
             mask,
-            float("-inf"),
+            torch.finfo(similarity.dtype).min,
         )
 
-        positive_indices = torch.cat(
-            [
-                torch.arange(
-                    batch_size,
-                    total_samples,
-                    device=similarity.device,
-                ),
-                torch.arange(
-                    0,
-                    batch_size,
-                    device=similarity.device,
-                ),
-            ]
-        )
+        positive_indices = (
+            torch.arange(
+                2 * batch_size,
+                device=similarity.device,
+            )
+            + batch_size
+        ) % (2 * batch_size)
 
         return F.cross_entropy(
             similarity,
@@ -226,29 +247,31 @@ class MultimodalTotalLoss(nn.Module):
     """
     Complete weighted multimodal training loss.
 
-    Configuration:
-
-        hate        = BCE
-        sarcasm     = BCE
-        contrastive = NT-Xent
-        target      = Multi-label BCE
-
-    Weights:
-
+    Default weights:
         hate        = 1.0
         sarcasm     = 0.3
         contrastive = 0.1
         target      = 0.2
+
+    sarcasm_positive_weight weights class 1 (sarcasm)
+    without increasing the weight of class 0.
     """
 
     def __init__(
         self,
+        hate_weight: float = 1.0,
         sarcasm_weight: float = 0.3,
         contrastive_weight: float = 0.1,
         target_weight: float = 0.2,
         contrastive_temperature: float = 0.07,
+        sarcasm_positive_weight: float = 1.0,
     ) -> None:
         super().__init__()
+
+        if hate_weight < 0:
+            raise ValueError(
+                "hate_weight must be non-negative."
+            )
 
         if sarcasm_weight < 0:
             raise ValueError(
@@ -265,13 +288,21 @@ class MultimodalTotalLoss(nn.Module):
                 "target_weight must be non-negative."
             )
 
+        if sarcasm_positive_weight <= 0:
+            raise ValueError(
+                "sarcasm_positive_weight must be greater than zero."
+            )
+
+        self.hate_weight = hate_weight
         self.sarcasm_weight = sarcasm_weight
         self.contrastive_weight = contrastive_weight
         self.target_weight = target_weight
 
         self.hate_loss = BinaryClassificationLoss()
 
-        self.sarcasm_loss = BinaryClassificationLoss()
+        self.sarcasm_loss = BinaryClassificationLoss(
+            positive_weight=sarcasm_positive_weight,
+        )
 
         self.target_loss = MultiLabelBCELoss()
 
@@ -289,20 +320,7 @@ class MultimodalTotalLoss(nn.Module):
         target_targets: Tensor,
         image_representation: Tensor,
         text_representation: Tensor,
-    ) -> dict[str, Tensor]:
-        """
-        Calculate all component losses and the weighted total.
-
-        Returns:
-
-            {
-                "hate": ...,
-                "sarcasm": ...,
-                "contrastive": ...,
-                "target": ...,
-                "total": ...
-            }
-        """
+    ) -> Dict[str, Tensor]:
 
         hate = self.hate_loss(
             hate_logits,
@@ -325,7 +343,7 @@ class MultimodalTotalLoss(nn.Module):
         )
 
         total = (
-            hate
+            self.hate_weight * hate
             + self.sarcasm_weight * sarcasm
             + self.contrastive_weight * contrastive
             + self.target_weight * target

@@ -1,36 +1,37 @@
-"""
-Training entry point for the multimodal hate-speech model.
+import sys
+from pathlib import Path
 
-Member 4 ownership.
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+SRC_ROOT = PROJECT_ROOT / "src"
 
-IMPORTANT:
-    The default mode is SAFE.
-    Full training must be explicitly requested.
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
-Examples:
-
-    Safe one-batch test:
-        python scripts/train.py --smoke-test
-
-    One full epoch:
-        python scripts/train.py --epochs 1
-
-    Full training:
-        python scripts/train.py --epochs 5
-"""
-
-from __future__ import annotations
+if str(SRC_ROOT) not in sys.path:
+    sys.path.insert(0, str(SRC_ROOT))
 
 import argparse
-import random
-
-import numpy as np
 import torch
+
+from torch.utils.data import DataLoader
 from transformers import (
-    AutoModelForSequenceClassification,
     AutoTokenizer,
+    AutoModelForSequenceClassification,
 )
 
+from src.multimodal_hate.data.loaders.hateful_memes import (
+    load_hateful_memes,
+)
+from src.multimodal_hate.training.dataset import (
+    MultimodalHateSpeechDataset,
+    multimodal_collate_fn,
+)
+from src.multimodal_hate.training.trainer import (
+    MultimodalTrainer,
+)
+from src.multimodal_hate.training.losses import (
+    MultimodalTotalLoss,
+)
 from src.multimodal_hate.models.multimodal_model import (
     MultimodalHateSpeechModel,
 )
@@ -40,416 +41,378 @@ from src.multimodal_hate.models.sarcasm.sarcasm_bert import (
 from src.multimodal_hate.models.sarcasm.sentiment import (
     SentimentReversal,
 )
-from src.multimodal_hate.training.trainer import (
-    MultimodalTrainer,
-)
-from scripts.prepare_data import (
-    create_dataloaders,
-)
 
 
 # ============================================================
-# REPRODUCIBILITY
+# PATHS
 # ============================================================
 
-def set_seed(seed: int) -> None:
-    """Set random seeds for reproducible experiments."""
+DATA_ROOT = PROJECT_ROOT / "data" / "raw" / "hateful_memes"
 
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
+TRAIN_FILE = DATA_ROOT / "train_weak_labels.jsonl"
+DEV_FILE = DATA_ROOT / "dev_weak_labels.jsonl"
+TEST_FILE = DATA_ROOT / "test.jsonl"
 
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(seed)
+IMAGE_DIR = DATA_ROOT
 
 
 # ============================================================
 # ARGUMENTS
 # ============================================================
 
-def parse_args() -> argparse.Namespace:
+def parse_args():
     parser = argparse.ArgumentParser(
-        description="Train multimodal hate-speech model."
+        description="Train multimodal hate speech model"
+    )
+
+    parser.add_argument("--epochs", type=int, default=5)
+    parser.add_argument("--batch-size", type=int, default=16)
+    parser.add_argument("--device", type=str, default="cuda")
+
+    parser.add_argument(
+        "--checkpoint-dir",
+        type=str,
+        default="artifacts/checkpoints_sarcasm_weighted",
+    )
+
+    parser.add_argument(
+        "--sarcasm-positive-weight",
+        type=float,
+        default=10.0,
+        help="Weight applied to positive sarcasm targets.",
     )
 
     parser.add_argument(
         "--smoke-test",
         action="store_true",
-        help="Run exactly one training batch.",
-    )
-
-    parser.add_argument(
-        "--epochs",
-        type=int,
-        default=1,
-        help="Number of training epochs.",
-    )
-
-    parser.add_argument(
-        "--batch-size",
-        type=int,
-        default=2,
-        help="Training batch size.",
-    )
-
-    parser.add_argument(
-        "--seed",
-        type=int,
-        default=42,
-        help="Random seed.",
-    )
-
-    parser.add_argument(
-        "--device",
-        choices=["auto", "cpu", "cuda"],
-        default="auto",
-        help="Training device.",
-    )
-
-    parser.add_argument(
-        "--checkpoint-dir",
-        type=str,
-        default="artifacts/checkpoints",
-        help="Directory for model checkpoints.",
     )
 
     return parser.parse_args()
 
 
 # ============================================================
-# DEVICE
+# LOAD DATA
 # ============================================================
 
-def resolve_device(
-    device_name: str,
-) -> torch.device:
-    """Resolve requested training device."""
-
-    if device_name == "cpu":
-        return torch.device("cpu")
-
-    if device_name == "cuda":
-        if not torch.cuda.is_available():
-            raise RuntimeError(
-                "CUDA was requested but is not available."
+def create_dataloaders(batch_size):
+    for path in (TRAIN_FILE, DEV_FILE, TEST_FILE):
+        if not path.exists():
+            raise FileNotFoundError(
+                f"Required annotation file not found: {path}"
             )
 
-        return torch.device("cuda")
-
-    if torch.cuda.is_available():
-        return torch.device("cuda")
-
-    return torch.device("cpu")
-
-
-# ============================================================
-# SARCASM MODULE
-# ============================================================
-
-def create_sarcasm_encoder(
-    device: torch.device,
-) -> SarcasmBERT:
-    """
-    Create the sarcasm encoder.
-
-    The checkpoint remains configurable because the project
-    methodology does not specify a single mandatory
-    SarcasmBERT checkpoint.
-    """
-
-    model_name = "bert-base-uncased"
-
-    tokenizer = AutoTokenizer.from_pretrained(
-        model_name
+    train_samples = load_hateful_memes(
+        str(TRAIN_FILE), str(IMAGE_DIR)
+    )
+    dev_samples = load_hateful_memes(
+        str(DEV_FILE), str(IMAGE_DIR)
+    )
+    test_samples = load_hateful_memes(
+        str(TEST_FILE), str(IMAGE_DIR)
     )
 
-    model = SarcasmBERT(
-        model_name=model_name,
-        device=device,
+    print("Train samples:", len(train_samples))
+    print("Dev samples:", len(dev_samples))
+    print("Test samples:", len(test_samples))
+
+    train_dataset = MultimodalHateSpeechDataset(train_samples)
+    dev_dataset = MultimodalHateSpeechDataset(dev_samples)
+    test_dataset = MultimodalHateSpeechDataset(test_samples)
+
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=0,
+        collate_fn=multimodal_collate_fn,
+        pin_memory=True,
+    )
+
+    dev_loader = DataLoader(
+        dev_dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=0,
+        collate_fn=multimodal_collate_fn,
+        pin_memory=True,
+    )
+
+    test_loader = DataLoader(
+        test_dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=0,
+        collate_fn=multimodal_collate_fn,
+        pin_memory=True,
+    )
+
+    return train_loader, dev_loader, test_loader
+
+
+# ============================================================
+# FREEZE HATEBERT
+# ============================================================
+
+def freeze_hatebert(model):
+    if not hasattr(model, "text_encoder"):
+        print("WARNING: model.text_encoder not found.")
+        return
+
+    count = 0
+
+    for parameter in model.text_encoder.parameters():
+        parameter.requires_grad = False
+        count += parameter.numel()
+
+    model.text_encoder.eval()
+
+    print("HateBERT frozen parameters:", count)
+
+
+# ============================================================
+# CREATE MODEL
+# ============================================================
+
+def create_model(device):
+    print("\n" + "=" * 70)
+    print("CREATING 2-LAYER FUSION MODEL")
+    print("=" * 70)
+
+    sarcasm_encoder = SarcasmBERT(
+        model_name="bert-base-uncased",
+        representation_dim=768,
         max_length=128,
         dropout=0.1,
-        tokenizer=tokenizer,
-        representation_dim=768,
     )
 
-    model.to(device)
-
-    return model
-
-
-# ============================================================
-# SENTIMENT MODULE
-# ============================================================
-
-def create_sentiment_module(
-    device: torch.device,
-) -> SentimentReversal:
-    """
-    Create the sentiment-reversal module.
-
-    A sequence-classification model is required because
-    SentimentReversal extracts classification logits.
-    """
-
-    model_name = (
+    sentiment_name = (
         "distilbert-base-uncased-finetuned-sst-2-english"
     )
 
-    tokenizer = AutoTokenizer.from_pretrained(
-        model_name
+    sentiment_tokenizer = AutoTokenizer.from_pretrained(
+        sentiment_name
     )
 
-    model = (
-        AutoModelForSequenceClassification.from_pretrained(
-            model_name
-        )
+    sentiment_model = AutoModelForSequenceClassification.from_pretrained(
+        sentiment_name
     )
 
-    model.to(device)
-
-    model.eval()
-
-    return SentimentReversal(
-        tokenizer=tokenizer,
-        model=model,
+    sentiment_module = SentimentReversal(
+        tokenizer=sentiment_tokenizer,
+        model=sentiment_model,
         device=device,
-        max_length=128,
-        reversal_threshold=0.5,
-        vader_threshold=0.05,
     )
 
-
-# ============================================================
-# MODEL
-# ============================================================
-
-def create_model(
-    device: torch.device,
-) -> MultimodalHateSpeechModel:
-    """Create the project multimodal model."""
-
-    sarcasm_encoder = create_sarcasm_encoder(
-        device
-    )
-
-    sentiment_module = create_sentiment_module(
-        device
-    )
-
-    return MultimodalHateSpeechModel(
+    model = MultimodalHateSpeechModel(
         sarcasm_encoder=sarcasm_encoder,
         sentiment_module=sentiment_module,
         fusion_dim=512,
         sarcasm_gate_dim=64,
-        num_fusion_layers=4,
+        num_fusion_layers=2,
         num_heads=8,
         dropout=0.1,
     )
+
+    model.to(device)
+
+    freeze_hatebert(model)
+
+    if hasattr(model, "sentiment_module"):
+        sentiment_model_obj = model.sentiment_module.model
+
+        for parameter in sentiment_model_obj.parameters():
+            parameter.requires_grad = False
+
+        sentiment_model_obj.eval()
+        print("Sentiment model frozen.")
+
+    return model
 
 
 # ============================================================
 # OPTIMIZER
 # ============================================================
 
-def create_optimizer(
-    model: torch.nn.Module,
-) -> torch.optim.Optimizer:
-    """Create AdamW optimizer."""
+def create_optimizer(model):
+    pretrained_parameters = []
+    task_parameters = []
+    frozen_parameters = []
 
-    return torch.optim.AdamW(
-        model.parameters(),
-        lr=1e-4,
+    pretrained_keywords = (
+        "clip_image_encoder",
+        "clip_text_encoder",
+        "image_encoder",
+        "sarcasm_encoder",
     )
+
+    for name, parameter in model.named_parameters():
+        if not parameter.requires_grad:
+            frozen_parameters.append(parameter)
+            continue
+
+        if any(key in name for key in pretrained_keywords):
+            pretrained_parameters.append(parameter)
+        else:
+            task_parameters.append(parameter)
+
+    groups = []
+
+    if pretrained_parameters:
+        groups.append({
+            "params": pretrained_parameters,
+            "lr": 1e-5,
+        })
+
+    if task_parameters:
+        groups.append({
+            "params": task_parameters,
+            "lr": 1e-4,
+        })
+
+    if not groups:
+        raise RuntimeError("No trainable model parameters found.")
+
+    optimizer = torch.optim.AdamW(
+        groups,
+        weight_decay=0.01,
+    )
+
+    print("\nOPTIMIZER PARAMETER GROUPS")
+    print(
+        "Pretrained encoder parameters:",
+        sum(p.numel() for p in pretrained_parameters),
+    )
+    print(
+        "Task-specific parameters:",
+        sum(p.numel() for p in task_parameters),
+    )
+    print(
+        "Frozen parameters:",
+        sum(p.numel() for p in frozen_parameters),
+    )
+
+    return optimizer
 
 
 # ============================================================
-# SAFE SMOKE TEST
+# LOSS WITH SARCASM CLASS WEIGHTING
 # ============================================================
 
-def run_smoke_test(
-    trainer: MultimodalTrainer,
-    train_loader,
-) -> None:
-    """
-    Run exactly ONE training batch.
+def create_loss(sarcasm_positive_weight):
+    print("\nLOSS CONFIGURATION")
+    print("Hate weight: 1.0")
+    print("Sarcasm loss weight: 0.05")
+    print("Sarcasm positive-class weight:", sarcasm_positive_weight)
+    print("Contrastive weight: 0.01")
+    print("Target weight: 0.05")
 
-    This deliberately avoids a full epoch.
-    """
-
-    print()
-    print("=" * 60)
-    print("SAFE TRAINING SMOKE TEST")
-    print("=" * 60)
-
-    batch = next(iter(train_loader))
-
-    print()
-    print("ONE BATCH LOADED")
-    print("Images:", batch["image"].shape)
-    print("Texts:", len(batch["text"]))
-
-    class OneBatchLoader:
-        def __iter__(self):
-            yield batch
-
-        def __len__(self):
-            return 1
-
-    one_batch_loader = OneBatchLoader()
-
-    result = trainer.train_epoch(
-        one_batch_loader
+    return MultimodalTotalLoss(
+        hate_weight=1.0,
+        sarcasm_weight=0.05,
+        contrastive_weight=0.01,
+        target_weight=0.05,
+        sarcasm_positive_weight=sarcasm_positive_weight,
     )
-
-    print()
-    print("TRAINING SUCCESS")
-    print("Batches:", result.batches)
-    print("Total loss:", result.loss)
-    print("Hate loss:", result.hate_loss)
-    print("Sarcasm loss:", result.sarcasm_loss)
-    print("Contrastive loss:", result.contrastive_loss)
-    print("Target loss:", result.target_loss)
-
-    print()
-    print("=" * 60)
-    print("SMOKE TEST PASSED")
-    print("=" * 60)
 
 
 # ============================================================
 # MAIN
 # ============================================================
 
-def main() -> None:
-
+def main():
     args = parse_args()
 
-    set_seed(args.seed)
+    if args.epochs < 1:
+        raise ValueError("--epochs must be at least 1.")
 
-    device = resolve_device(
-        args.device
+    if args.batch_size < 2:
+        raise ValueError("--batch-size must be at least 2.")
+
+    if args.sarcasm_positive_weight <= 0:
+        raise ValueError(
+            "--sarcasm-positive-weight must be greater than zero."
+        )
+
+    device = torch.device(
+        "cuda"
+        if args.device == "cuda" and torch.cuda.is_available()
+        else "cpu"
     )
 
-    print("=" * 60)
-    print("MULTIMODAL HATE-SPEECH TRAINING")
-    print("=" * 60)
+    checkpoint_dir = Path(args.checkpoint_dir)
 
-    print()
+    if not checkpoint_dir.is_absolute():
+        checkpoint_dir = PROJECT_ROOT / checkpoint_dir
+
+    # Prevent accidental overwriting of the original model.
+    original_checkpoint_dir = (
+        PROJECT_ROOT / "artifacts" / "checkpoints_fusion2"
+    ).resolve()
+
+    if checkpoint_dir.resolve() == original_checkpoint_dir:
+        raise ValueError(
+            "Choose a new checkpoint directory. "
+            "The original fusion2 checkpoint must be preserved."
+        )
+
+    checkpoint_dir.mkdir(parents=True, exist_ok=True)
+
+    print("\n" + "=" * 70)
+    print("SARCASM-WEIGHTED MULTIMODAL TRAINING")
+    print("=" * 70)
     print("Device:", device)
+    print("Fusion layers: 2")
     print("Batch size:", args.batch_size)
     print("Epochs:", args.epochs)
+    print("Checkpoint directory:", checkpoint_dir)
 
-    if args.smoke_test:
-        print("MODE: SAFE SMOKE TEST")
-        print("Only ONE batch will be trained.")
-    else:
-        print("MODE: FULL TRAINING")
-        print(
-            "WARNING: Full dataset training requested."
-        )
-
-    # --------------------------------------------------------
-    # DATA
-    # --------------------------------------------------------
-
-    train_loader, dev_loader, test_loader = (
-        create_dataloaders(
-            batch_size=args.batch_size,
-            num_workers=0,
-        )
+    train_loader, dev_loader, _ = create_dataloaders(
+        args.batch_size
     )
 
-    print()
-    print(
-        "Train samples:",
-        len(train_loader.dataset),
+    model = create_model(device)
+    optimizer = create_optimizer(model)
+
+    loss_fn = create_loss(
+        args.sarcasm_positive_weight
     )
-
-    print(
-        "Dev samples:",
-        len(dev_loader.dataset),
-    )
-
-    print(
-        "Test samples:",
-        len(test_loader.dataset),
-    )
-
-    # --------------------------------------------------------
-    # MODEL
-    # --------------------------------------------------------
-
-    print()
-    print("Creating model...")
-
-    model = create_model(
-        device
-    )
-
-    model.to(device)
-
-    print("MODEL: OK")
-
-    # --------------------------------------------------------
-    # OPTIMIZER
-    # --------------------------------------------------------
-
-    optimizer = create_optimizer(
-        model
-    )
-
-    print("OPTIMIZER: OK")
-
-    # --------------------------------------------------------
-    # TRAINER
-    # --------------------------------------------------------
 
     trainer = MultimodalTrainer(
         model=model,
         optimizer=optimizer,
         device=device,
-        gradient_accumulation_steps=1,
-        mixed_precision=(
-            device.type == "cuda"
-        ),
+        loss_fn=loss_fn,
+        checkpoint_dir=checkpoint_dir,
+        mixed_precision=(device.type == "cuda"),
         gradient_clipping=1.0,
-        checkpoint_dir=args.checkpoint_dir,
     )
 
-    print("TRAINER: OK")
-
-    # --------------------------------------------------------
-    # SAFE MODE
-    # --------------------------------------------------------
-
     if args.smoke_test:
-
-        run_smoke_test(
-            trainer,
-            train_loader,
+        print("\nRunning one-epoch smoke test...")
+        trainer.fit(
+            train_loader=train_loader,
+            validation_loader=train_loader,
+            epochs=1,
         )
-
+        print("Smoke test complete.")
         return
 
-    # --------------------------------------------------------
-    # FULL TRAINING
-    # --------------------------------------------------------
+    print("\nStarting sarcasm-weighted training...")
 
     history = trainer.fit(
         train_loader=train_loader,
         validation_loader=dev_loader,
         epochs=args.epochs,
-        early_stopping_patience=5,
     )
 
-    print()
-    print("=" * 60)
+    print("\n" + "=" * 70)
     print("TRAINING COMPLETE")
-    print("=" * 60)
-
+    print("=" * 70)
+    print("Epochs completed:", len(history.train))
+    print("Checkpoint directory:", checkpoint_dir)
     print(
-        "Epochs completed:",
-        len(history.train_loss),
+        "The official Hateful Memes test split has no labels; "
+        "evaluate hate detection on the labeled dev split."
     )
 
 

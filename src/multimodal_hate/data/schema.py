@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 
 @dataclass
@@ -15,6 +15,6 @@ class MultimodalSample:
     hate_label: Optional[int] = None
     sarcasm_label: Optional[int] = None
 
-    target_group: Optional[str] = None
+    target_group: Optional[List[str]] = None
 
     metadata: Dict[str, Any] = field(default_factory=dict)

@@ -6,7 +6,7 @@ Member 4 ownership.
 Heads:
     - Hate speech classification: 2 classes
     - Sarcasm classification: 2 classes
-    - Target-group classification: 5 labels
+    - Target-group classification: 4 labels
 
 The heads return raw logits.
 Loss functions such as BCEWithLogitsLoss are applied later
@@ -165,11 +165,10 @@ class TargetGroupClassificationHead(ClassificationHead):
         0 → race
         1 → religion
         2 → gender
-        3 → disability
-        4 → sexuality
+        3 → sexuality
 
     Output:
-        [B, 5]
+        [B, 4]
 
     The output contains raw logits. Apply sigmoid only when
     converting logits into independent target probabilities.
@@ -179,7 +178,6 @@ class TargetGroupClassificationHead(ClassificationHead):
         "race",
         "religion",
         "gender",
-        "disability",
         "sexuality",
     )
 
@@ -210,7 +208,7 @@ class MultitaskClassificationHeads(nn.Module):
     Outputs:
         hate_logits    [B, 2]
         sarcasm_logits [B, 2]
-        target_logits  [B, 5]
+        target_logits  [B, 4]
     """
 
     def __init__(
@@ -256,7 +254,7 @@ class MultitaskClassificationHeads(nn.Module):
             {
                 "hate": [B, 2],
                 "sarcasm": [B, 2],
-                "target": [B, 5],
+                "target": [B, 4],
             }
         """
 

@@ -52,7 +52,7 @@ Pipeline:
     MultitaskClassificationHeads
       ├── hate [B, 2]
       ├── sarcasm [B, 2]
-      └── target [B, 5]
+      └── target [B, 4]
 """
 
 from __future__ import annotations
@@ -103,7 +103,7 @@ class MultimodalHateSpeechOutput:
 
             hate     [B, 2]
             sarcasm  [B, 2]
-            target   [B, 5]
+            target   [B, 4]
 
     fused_tokens:
         Complete fused token representation:
@@ -859,8 +859,6 @@ class MultimodalHateSpeechModel(nn.Module):
             "incongruity_score",
         )
 
-        # Make sure the signal is compatible with the projected
-        # multimodal representation.
         incongruity_score = incongruity_score.to(
             device=image_tokens.device,
             dtype=image_tokens.dtype,
@@ -1035,7 +1033,7 @@ class MultimodalHateSpeechModel(nn.Module):
         # ┌─────────────────────────────┐
         # │ Hate       → [B, 2]         │
         # │ Sarcasm    → [B, 2]         │
-        # │ Target     → [B, 5]         │
+        # │ Target     → [B, 4]         │
         # └─────────────────────────────┘
         # ========================================================
 
@@ -1095,10 +1093,10 @@ class MultimodalHateSpeechModel(nn.Module):
 
         if logits["target"].shape != (
             batch_size,
-            5,
+            4,
         ):
             raise ValueError(
-                "Target logits must have shape [B, 5]. "
+                "Target logits must have shape [B, 4]. "
                 f"Got {tuple(logits['target'].shape)}."
             )
 

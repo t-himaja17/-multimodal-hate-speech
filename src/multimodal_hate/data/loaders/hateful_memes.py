@@ -12,13 +12,20 @@ def load_hateful_memes(
     """
     Load the Hateful Memes dataset from a JSONL annotation file.
 
-    Expected annotation format per line:
+    Supported annotation format per line:
+
         {
             "id": "123",
             "img": "img/123.png",
             "text": "example text",
-            "label": 1
+            "label": 1,
+            "sarcasm_label": 0,
+            "target_group": ["gender"],
+            "incongruity_type": "Hyperbole"
         }
+
+    The original Hateful Memes fields are preserved, while optional
+    auxiliary labels are loaded when present.
 
     Parameters
     ----------
@@ -64,21 +71,57 @@ def load_hateful_memes(
                     f"of {annotation_path}"
                 ) from exc
 
+            # ----------------------------------------------------
+            # ORIGINAL HATEFUL MEMES FIELDS
+            # ----------------------------------------------------
+
             sample_id = str(record["id"])
+
             text = record.get("text")
-            label = record.get("label")
+
+            hate_label = record.get("label")
 
             image_relative_path = record.get("img")
 
             image_path = None
+
             if image_relative_path:
-                image_path = str(image_root / image_relative_path)
+                image_path = str(
+                    image_root / image_relative_path
+                )
+
+            # ----------------------------------------------------
+            # AUXILIARY LABELS
+            # ----------------------------------------------------
+
+            sarcasm_label = record.get(
+                "sarcasm_label"
+            )
+
+            target_group = record.get(
+                "target_group"
+            )
+
+            # ----------------------------------------------------
+            # METADATA
+            # ----------------------------------------------------
 
             metadata = {
                 key: value
                 for key, value in record.items()
-                if key not in {"id", "img", "text", "label"}
+                if key not in {
+                    "id",
+                    "img",
+                    "text",
+                    "label",
+                    "sarcasm_label",
+                    "target_group",
+                }
             }
+
+            # ----------------------------------------------------
+            # CANONICAL SAMPLE
+            # ----------------------------------------------------
 
             samples.append(
                 MultimodalSample(
@@ -86,7 +129,9 @@ def load_hateful_memes(
                     source="hateful_memes",
                     image_path=image_path,
                     text=text,
-                    hate_label=label,
+                    hate_label=hate_label,
+                    sarcasm_label=sarcasm_label,
+                    target_group=target_group,
                     metadata=metadata,
                 )
             )

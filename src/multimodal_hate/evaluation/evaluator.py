@@ -156,10 +156,10 @@ class MultimodalEvaluator:
         Convert target-group logits into multi-label probabilities.
 
         Input:
-            [B, 5]
+            [B, 4]
 
         Output:
-            [B, 5]
+            [B, 4]
         """
 
         if not isinstance(logits, Tensor):
@@ -169,12 +169,12 @@ class MultimodalEvaluator:
 
         if logits.ndim != 2:
             raise ValueError(
-                "Target logits must have shape [B, 5]."
+                "Target logits must have shape [B, 4]."
             )
 
-        if logits.size(1) != 5:
+        if logits.size(1) != 4:
             raise ValueError(
-                "Target logits must contain five target groups."
+                "Target logits must contain four target groups."
             )
 
         return torch.sigmoid(logits)
@@ -241,6 +241,12 @@ class MultimodalEvaluator:
 
         A row containing all zeros means target-group annotation
         is unavailable.
+
+        Target groups:
+            1. race
+            2. religion
+            3. gender
+            4. sexuality
         """
 
         if not isinstance(targets, Tensor):
@@ -248,9 +254,9 @@ class MultimodalEvaluator:
                 "target_target must be a torch.Tensor."
             )
 
-        if targets.ndim != 2 or targets.size(1) != 5:
+        if targets.ndim != 2 or targets.size(1) != 4:
             raise ValueError(
-                "target_target must have shape [B, 5]. "
+                "target_target must have shape [B, 4]. "
                 f"Got {tuple(targets.shape)}."
             )
 
@@ -371,9 +377,11 @@ class MultimodalEvaluator:
             )
 
             hate_target = batch["hate_target"].detach().cpu()
+
             sarcasm_target = (
                 batch["sarcasm_target"].detach().cpu()
             )
+
             target_target = (
                 batch["target_target"].detach().cpu()
             )

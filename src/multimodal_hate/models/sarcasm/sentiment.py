@@ -282,7 +282,7 @@ class SentimentReversal(nn.Module):
             )
 
         encoded = {
-            key: value.to(self.device)
+            key: value.to(next(self.model.parameters()).device)
             for key, value in encoded.items()
             if isinstance(value, Tensor)
         }

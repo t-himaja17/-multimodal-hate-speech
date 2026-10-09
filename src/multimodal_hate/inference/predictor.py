@@ -56,13 +56,20 @@ class MultimodalPredictor:
         label decoding
     """
 
+    # ============================================================
+    # PROJECT TARGET GROUPS
+    # ============================================================
+
     TARGET_GROUPS = (
         "race",
         "religion",
         "gender",
-        "disability",
         "sexuality",
     )
+
+    # ============================================================
+    # INITIALIZATION
+    # ============================================================
 
     def __init__(
         self,
@@ -71,6 +78,7 @@ class MultimodalPredictor:
         image_size: int = 224,
         target_threshold: float = 0.5,
     ) -> None:
+
         if model is None:
             raise ValueError("model is required.")
 
@@ -112,8 +120,7 @@ class MultimodalPredictor:
         Load and preprocess an image.
 
         Returns:
-
-            [3, 224, 224]
+            Tensor with shape [3, 224, 224].
         """
 
         path = Path(image_path)
@@ -175,6 +182,7 @@ class MultimodalPredictor:
         )
 
         for name in required:
+
             if name not in logits:
                 raise ValueError(
                     f"Missing '{name}' logits."
@@ -188,6 +196,8 @@ class MultimodalPredictor:
                     f"{name} logits must be a tensor."
                 )
 
+        # Hate classification:
+        # [B, 2] -> not-hate / hate
         if logits["hate"].shape != (
             batch_size,
             2,
@@ -196,6 +206,8 @@ class MultimodalPredictor:
                 "Hate logits must have shape [B, 2]."
             )
 
+        # Sarcasm classification:
+        # [B, 2] -> not-sarcasm / sarcasm
         if logits["sarcasm"].shape != (
             batch_size,
             2,
@@ -204,12 +216,14 @@ class MultimodalPredictor:
                 "Sarcasm logits must have shape [B, 2]."
             )
 
+        # Target groups:
+        # [B, 4] -> race / religion / gender / sexuality
         if logits["target"].shape != (
             batch_size,
-            5,
+            4,
         ):
             raise ValueError(
-                "Target logits must have shape [B, 5]."
+                "Target logits must have shape [B, 4]."
             )
 
     # ============================================================
@@ -418,6 +432,7 @@ class MultimodalPredictor:
             )
 
         if sample_ids is not None:
+
             if len(sample_ids) != batch_size:
                 raise ValueError(
                     "Number of sample_ids must match "
