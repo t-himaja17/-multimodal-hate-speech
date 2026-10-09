@@ -216,3 +216,12 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+ 
+# Project datasets and generated model artifacts 
+data/raw/ 
+artifacts/checkpoints*/ 
+artifacts/checkpoints/ 
+*.pt 
+*.pth 
+__pycache__/ 
+*.pyc

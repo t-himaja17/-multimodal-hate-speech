@@ -1,1 +1,11 @@
+experiment:
+  name: baseline
+  description: Full multimodal model with all components enabled
 
+model:
+  use_sarcasm: true
+  use_cross_attention: true
+  use_contrastive_loss: true
+  use_ocr: true
+  use_text: true
+  use_image: true
