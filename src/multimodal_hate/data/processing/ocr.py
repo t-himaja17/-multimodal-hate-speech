@@ -1,15 +1,14 @@
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import List, Optional, Tuple
 
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageOps
 
 
 @dataclass
 class OCRResult:
-    """
-    Structured representation of OCR output for a single text region.
-    """
+    """Structured OCR output for a single text region."""
 
     text: str
     bounding_box: Tuple[int, int, int, int]
@@ -23,22 +22,14 @@ def create_ocr_result(
     region: Optional[str] = None,
     confidence: Optional[float] = None,
 ) -> OCRResult:
-    """
-    Create a structured OCR result.
-    """
-
     if not text or not text.strip():
         raise ValueError("OCR text cannot be empty.")
 
     if len(bounding_box) != 4:
-        raise ValueError(
-            "Bounding box must contain exactly four coordinates."
-        )
+        raise ValueError("Bounding box must contain four coordinates.")
 
     if confidence is not None and not 0.0 <= confidence <= 1.0:
-        raise ValueError(
-            "OCR confidence must be between 0.0 and 1.0."
-        )
+        raise ValueError("Confidence must be between 0 and 1.")
 
     return OCRResult(
         text=text.strip(),
@@ -49,25 +40,18 @@ def create_ocr_result(
 
 
 def format_ocr_text(results: List[OCRResult]) -> str:
-    """
-    Convert structured OCR results into positional OCR text.
-    """
-
-    if not results:
-        return ""
+    """Format recognized text with positional tags."""
 
     parts = []
 
     for result in results:
-        text = result.text.strip()
-
-        if not text:
+        if not result.text.strip():
             continue
 
         if result.region:
-            parts.append(f"[{result.region.upper()}] {text}")
+            parts.append(f"[{result.region.upper()}] {result.text}")
         else:
-            parts.append(text)
+            parts.append(result.text)
 
     return " ".join(parts)
 
@@ -76,27 +60,8 @@ def _assign_region(
     bounding_box: Tuple[int, int, int, int],
     image_height: int,
 ) -> str:
-    """
-    Assign a simple positional region to an OCR bounding box.
-
-    TOP:
-        Upper third of the image.
-
-    BOTTOM:
-        Lower third of the image.
-
-    CAPTION:
-        Middle region.
-    """
-
     _, y1, _, y2 = bounding_box
-
-    center_y = (y1 + y2) / 2.0
-
-    if image_height <= 0:
-        return "CAPTION"
-
-    relative_y = center_y / image_height
+    relative_y = ((y1 + y2) / 2.0) / max(1, image_height)
 
     if relative_y < 0.33:
         return "TOP"
@@ -107,71 +72,68 @@ def _assign_region(
     return "CAPTION"
 
 
+@lru_cache(maxsize=1)
+def _get_reader():
+    """Load and cache RapidOCR for local inference."""
+
+    from rapidocr import RapidOCR
+
+    return RapidOCR()
+
+
 def extract_text_easyocr(
     image_path: str,
     gpu: bool = True,
-    min_confidence: float = 0.15,
+    min_confidence: float = 0.10,
 ) -> List[OCRResult]:
     """
-    Extract text from an image using EasyOCR.
-
-    Returns structured OCR results containing:
-        - text
-        - bounding box
-        - positional region
-        - confidence
+    Preserve the existing function name for compatibility.
+    Recognition is performed using RapidOCR and ONNX Runtime.
+    The gpu argument is retained for compatibility.
     """
 
-    import easyocr
+    reader = _get_reader()
 
-    reader = easyocr.Reader(
-        ["en"],
-        gpu=gpu,
-    )
+    with Image.open(image_path) as source:
+        image = ImageOps.exif_transpose(source).convert("RGB")
+        image_array = np.asarray(image)
 
-    image = Image.open(image_path).convert("RGB")
-    image_array = np.asarray(image)
+    output = reader(image_array)
 
-    image_height = image_array.shape[0]
+    if output is None or output.boxes is None:
+        return []
 
-    raw_results = reader.readtext(image_array)
-
+    image_height, image_width = image_array.shape[:2]
     results: List[OCRResult] = []
 
-    for item in raw_results:
-        if len(item) != 3:
-            continue
-
-        coordinates, text, confidence = item
-
-        if not text or not text.strip():
-            continue
-
+    for box_points, text, confidence in zip(
+        output.boxes,
+        output.txts,
+        output.scores,
+    ):
+        text = " ".join(str(text).split())
         confidence = float(confidence)
 
-        if confidence < min_confidence:
+        if not text or confidence < min_confidence:
             continue
 
-        xs = [int(point[0]) for point in coordinates]
-        ys = [int(point[1]) for point in coordinates]
+        points = np.asarray(box_points, dtype=float)
 
-        bounding_box = (
-            min(xs),
-            min(ys),
-            max(xs),
-            max(ys),
-        )
+        x1 = max(0, int(points[:, 0].min()))
+        y1 = max(0, int(points[:, 1].min()))
+        x2 = min(image_width, int(points[:, 0].max()))
+        y2 = min(image_height, int(points[:, 1].max()))
 
-        region = _assign_region(
-            bounding_box,
-            image_height,
-        )
+        bounding_box = (x1, y1, x2, y2)
 
         results.append(
             create_ocr_result(
                 text=text,
                 bounding_box=bounding_box,
-                region=region,
+                region=_assign_region(
+                    bounding_box,
+                    image_height,
+                ),
                 confidence=confidence,
             )
         )
@@ -190,16 +152,7 @@ def extract_text_from_image(
     image_path: str,
     gpu: bool = True,
 ) -> str:
-    """
-    Extract and format OCR text from an image.
-
-    This is the main image-only OCR entry point used by inference.
-
-    The output contains positional OCR tags:
-        [TOP]
-        [CAPTION]
-        [BOTTOM]
-    """
+    """Public entry point used by the existing application."""
 
     results = extract_text_easyocr(
         image_path=image_path,
