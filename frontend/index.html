@@ -1,0 +1,692 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#080808">
+  <title>Sarcasm-Aware Meme Analysis</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg:#080808; --panel:#0d0d0d; --card:#090909;
+      --border:#292929; --text:#f5f5f5; --muted:#a6a6a6;
+      --green:#4caf66; --green-bg:#102416; --orange:#d17b5d;
+      --track:#292929; --analysis:#c4c4c4;
+      --secondary:#242424; --secondary-text:#eee;
+      --overall:#100e19; --overall-border:#443b76;
+    }
+
+    * { box-sizing:border-box; }
+    html { scroll-behavior:smooth; }
+    body {
+      margin:0; background:var(--bg); color:var(--text);
+      font:14px/1.55 Arial,Helvetica,sans-serif;
+      transition:background .25s,color .25s;
+    }
+    .container { width:min(100% - 32px,1050px); margin:auto; padding:32px 0 48px; }
+    header { margin-bottom:28px; }
+    .page-header { display:flex; justify-content:space-between; align-items:flex-start; gap:20px; }
+    .header-copy { flex:1; min-width:0; }
+    .eyebrow { color:#b8aaff; text-transform:uppercase; letter-spacing:2px; font-size:11px; font-weight:700; }
+    h1 { margin:8px 0; font-size:clamp(25px,4vw,36px); line-height:1.2; }
+    h2 { font-size:17px; margin:0 0 16px; }
+    h3 { font-size:15px; margin:0; }
+    .subtitle { max-width:680px; color:var(--muted); margin:10px 0 0; }
+    .panel {
+      background:var(--panel); border:1px solid var(--border);
+      border-radius:12px; padding:20px; margin-bottom:22px;
+      transition:background .25s,border-color .25s;
+    }
+    .upload-area {
+      display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr);
+      gap:22px; align-items:center;
+    }
+    .dropzone {
+      min-height:180px; border:1px dashed #454545; border-radius:10px;
+      display:flex; flex-direction:column; align-items:center;
+      justify-content:center; padding:22px; text-align:center;
+      background:var(--card); transition:border-color .25s;
+    }
+    .dropzone:hover { border-color:#9b8cff; }
+    .upload-icon { font-size:32px; margin-bottom:6px; }
+    .dropzone p { color:var(--muted); margin:5px 0 14px; }
+    input[type=file] { max-width:100%; color:var(--muted); font-size:12px; }
+    .preview-wrap { display:none; text-align:center; }
+    #imagePreview {
+      display:block; max-width:100%; max-height:310px; margin:auto;
+      object-fit:contain; border-radius:8px; border:1px solid var(--border);
+    }
+    #fileName { color:var(--muted); overflow-wrap:anywhere; margin:8px 0 0; font-size:12px; }
+    .actions { display:flex; gap:10px; flex-wrap:wrap; margin-top:18px; }
+    button {
+      border:0; border-radius:8px; padding:12px 18px; font-weight:700;
+      font-size:13px; cursor:pointer;
+      transition:opacity .2s,transform .2s,background .25s,color .25s;
+    }
+    button:hover:not(:disabled) { opacity:.88; transform:translateY(-2px); }
+    button:disabled { opacity:.45; cursor:not-allowed; }
+    .primary-btn { color:#fff; background:#725de7; }
+    .secondary-btn { color:var(--secondary-text); background:var(--secondary); border:1px solid var(--border); }
+    .theme-toggle {
+      display:inline-flex; align-items:center; justify-content:center; gap:9px;
+      flex-shrink:0; color:var(--text); background:var(--panel);
+      border:1px solid var(--border); border-radius:30px; padding:10px 15px;
+      white-space:nowrap;
+    }
+    #themeIcon { font-size:18px; }
+    #status { margin-top:13px; color:var(--muted); white-space:pre-wrap; overflow-wrap:anywhere; }
+    #status.error { color:#ff8b8b; }
+    #status.success { color:#82d995; }
+    .results { display:none; }
+    .section-title { font-size:17px; margin:26px 0 12px; }
+    .result-card {
+      background:var(--card); border:1px solid var(--border);
+      border-radius:10px; padding:14px 16px; margin-bottom:12px;
+    }
+    .result-heading,.probability-row,.target-heading {
+      display:flex; justify-content:space-between; align-items:center; gap:12px;
+    }
+    .result-heading { margin-bottom:14px; }
+    .pill { font-size:10px; font-weight:700; padding:3px 8px; border-radius:20px; white-space:nowrap; }
+    .pill-green { color:#76d987; background:var(--green-bg); }
+    .pill-red { color:#ffaaa2; background:#301714; }
+    .pill-neutral { color:#dedede; background:#252525; }
+    .probability-row { margin-bottom:8px; color:var(--analysis); font-size:12px; }
+    .probability-value { color:var(--text); font-size:15px; font-weight:700; white-space:nowrap; }
+    .progress-track { width:100%; height:6px; overflow:hidden; border-radius:10px; background:var(--track); }
+    .progress-fill { height:100%; width:0; border-radius:10px; transition:width .9s cubic-bezier(.2,.7,.2,1); }
+    .hate-fill { background:var(--orange); }
+    .sarcasm-fill { background:#858585; }
+    .target-fill { background:#929eb3; }
+    .target-item { margin:14px 0; animation:slideIn .4s ease both; }
+    .target-heading { margin-bottom:6px; }
+    .target-name { font-weight:600; }
+    .target-score { font-weight:700; white-space:nowrap; }
+    .target-item.selected .target-fill { background:var(--green); }
+    .target-item.selected .target-score { color:#76d987; }
+    .selected-tag { color:#76d987; background:var(--green-bg); border-radius:20px; padding:3px 8px; font-size:10px; margin-left:5px; }
+    .footnote { color:var(--muted); font-size:11px; margin:12px 0 0; }
+    .selection-summary { margin:14px 0 0; color:var(--text); }
+    .chart-panel { overflow:hidden; margin-top:20px; }
+    .chart-heading { display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; margin-bottom:22px; }
+    .chart-heading h2 { margin-bottom:4px; }
+    .chart-subtitle,.chart-legend { color:var(--muted); font-size:12px; }
+    .chart-subtitle { margin:0; }
+    .chart-legend { display:flex; align-items:center; gap:7px; }
+    .legend-dot { width:9px; height:9px; border-radius:50%; background:#8d7bf2; }
+    .chart-row { display:grid; grid-template-columns:95px minmax(0,1fr) 70px; align-items:center; gap:12px; margin:20px 0; animation:slideIn .45s ease both; }
+    .chart-row:nth-child(2) { animation-delay:.06s; }
+    .chart-row:nth-child(3) { animation-delay:.12s; }
+    .chart-row:nth-child(4) { animation-delay:.18s; }
+    .chart-label { font-size:13px; font-weight:600; }
+    .chart-track { width:100%; height:19px; background:var(--track); border-radius:5px; overflow:hidden; }
+    .chart-bar { width:0; height:100%; border-radius:5px; background:linear-gradient(90deg,#7561e8,#ad9eff); transition:width 1s cubic-bezier(.2,.7,.2,1); }
+    .chart-bar.top-score { background:linear-gradient(90deg,#299b52,#71d58a); }
+    .chart-value { text-align:right; font-size:12px; font-weight:700; font-variant-numeric:tabular-nums; }
+    .analysis-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
+    .analysis-card {
+      background:var(--card); border:1px solid var(--border);
+      border-radius:9px; padding:15px; min-width:0;
+      transition:background .25s,border-color .25s,box-shadow .25s;
+    }
+    .analysis-card h3 { margin-bottom:8px; }
+    .analysis-card p { margin:0; color:var(--analysis); overflow-wrap:anywhere; }
+    .overall-card { margin-top:12px; border-color:var(--overall-border); background:var(--overall); }
+    .notice { color:var(--muted); font-size:12px; margin-top:14px; }
+    .ocr-box { padding:12px; background:var(--card); border:1px solid var(--border); border-radius:8px; color:var(--analysis); white-space:pre-wrap; overflow-wrap:anywhere; min-height:44px; }
+    .request-id { display:inline-block; color:var(--text); background:var(--secondary); border-radius:4px; padding:1px 5px; font-family:monospace; font-size:12px; }
+    .result-card:hover,.analysis-card:hover { border-color:#6555ad; box-shadow:0 4px 18px rgba(101,85,173,.08); }
+    @keyframes slideIn {
+      from { opacity:0; transform:translateY(9px); }
+      to { opacity:1; transform:translateY(0); }
+    }
+    @keyframes revealResults {
+      from { opacity:0; transform:translateY(12px); }
+      to { opacity:1; transform:translateY(0); }
+    }
+    .results { animation:revealResults .5s ease; }
+    body.light-theme {
+      color-scheme:light;
+      --bg:#f3f5fa; --panel:#fff; --card:#fff; --border:#dce1eb;
+      --text:#202334; --muted:#626b7d; --green:#238443; --green-bg:#e4f5e9;
+      --orange:#c86e50; --track:#e4e7ef; --analysis:#4e5668;
+      --secondary:#eceef5; --secondary-text:#25283a;
+      --overall:#f0edff; --overall-border:#d0c6ff;
+    }
+    body.light-theme .pill-neutral { color:#42495b; background:#e9ecf3; }
+    body.light-theme .pill-red { color:#a62e25; background:#ffebe8; }
+    body.light-theme .pill-green,body.light-theme .selected-tag { color:#206c39; background:#e4f5e9; }
+    body.light-theme .theme-toggle { background:#fff; color:#25283a; }
+    body.light-theme .dropzone { border-color:#bdc5d4; }
+    body.light-theme hr { border-top-color:#e5e7ee !important; }
+    @media(max-width:650px) {
+      .container { width:min(100% - 22px,1050px); padding-top:22px; }
+      .panel { padding:14px; }
+      .page-header { flex-direction:column; }
+      .theme-toggle { align-self:flex-start; }
+      .upload-area,.analysis-grid { grid-template-columns:1fr; }
+      .dropzone { min-height:150px; }
+      .result-heading { align-items:flex-start; }
+      .chart-row { grid-template-columns:72px minmax(0,1fr) 58px; gap:8px; }
+      .chart-label { font-size:12px; }
+      .chart-value { font-size:11px; }
+    }
+    @media(prefers-reduced-motion:reduce) {
+      *,*::before,*::after {
+        animation-duration:.01ms !important;
+        transition-duration:.01ms !important;
+        scroll-behavior:auto !important;
+      }
+    }
+  </style>
+</head>
+<body>
+<main class="container">
+  <header class="page-header">
+    <div class="header-copy">
+      <div class="eyebrow">Multimodal AI Research</div>
+      <h1>Sarcasm-Aware Meme Analysis</h1>
+      <p class="subtitle">Analyze meme images using the trained multimodal hate speech detection model, sarcasm classifier, and target-group predictions.</p>
+    </div>
+    <button id="themeToggle" class="theme-toggle" type="button" aria-label="Switch to light mode" aria-pressed="false">
+      <span id="themeIcon" aria-hidden="true">☀</span>
+      <span id="themeLabel">Light mode</span>
+    </button>
+  </header>
+
+  <section class="panel">
+    <h2>Upload a meme</h2>
+    <div class="upload-area">
+      <div>
+        <div class="dropzone">
+          <div class="upload-icon">▧</div>
+          <strong>Choose an image to analyze</strong>
+          <p>PNG, JPG, JPEG or WEBP · Maximum 10 MB</p>
+          <input id="memeInput" type="file" accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp">
+        </div>
+        <div class="actions">
+          <button id="analyzeBtn" class="primary-btn" disabled>Analyze meme</button>
+          <button id="resetBtn" class="secondary-btn" type="button">Reset</button>
+        </div>
+        <div id="status" role="status" aria-live="polite">Select a meme image to begin.</div>
+      </div>
+      <div id="previewWrap" class="preview-wrap">
+        <img id="imagePreview" alt="Selected meme preview">
+        <p id="fileName"></p>
+      </div>
+    </div>
+  </section>
+
+  <section id="results" class="results" aria-live="polite">
+    <h2 class="section-title">1. Actual prediction for meme <span id="requestId" class="request-id">—</span></h2>
+    <div class="result-card">
+      <div class="result-heading">
+        <h3>Hate detection</h3><span id="hateBadge" class="pill pill-neutral">—</span>
+      </div>
+      <div class="probability-row"><span>Model probability for hate</span><span id="hateProbability" class="probability-value">—</span></div>
+      <div class="progress-track"><div id="hateBar" class="progress-fill hate-fill"></div></div>
+      <hr style="border:0;border-top:1px solid #202020;margin:18px 0;">
+      <div class="result-heading">
+        <h3>Sarcasm detection</h3><span id="sarcasmBadge" class="pill pill-neutral">—</span>
+      </div>
+      <div class="probability-row"><span>Model probability for sarcasm</span><span id="sarcasmProbability" class="probability-value">—</span></div>
+      <div class="progress-track"><div id="sarcasmBar" class="progress-fill sarcasm-fill"></div></div>
+    </div>
+
+    <h2 class="section-title">2. Target-group predictions</h2>
+    <div class="result-card">
+      <div id="targetGroups"></div>
+      <p class="footnote">Scores are model probabilities, not guarantees of correctness.</p>
+      <p id="selectionSummary" class="selection-summary"></p>
+    </div>
+
+    <section class="panel chart-panel" aria-labelledby="chartTitle">
+      <div class="chart-heading">
+        <div><h2 id="chartTitle">Target-group comparison</h2><p class="chart-subtitle">Compare the model's predicted probabilities</p></div>
+        <span class="chart-legend"><span class="legend-dot"></span> Probability</span>
+      </div>
+      <div id="targetChart" class="target-chart" aria-label="Animated target-group probability chart">
+        <p class="footnote">Run an analysis to display the chart.</p>
+      </div>
+      <p class="footnote">Percentages represent model scores, not verified conclusions.</p>
+    </section>
+
+    <h2 class="section-title">3. Model analysis</h2>
+    <div class="analysis-grid">
+      <article class="analysis-card"><h3>Hate speech analysis</h3><p id="hateAnalysis"></p></article>
+      <article class="analysis-card"><h3>Sarcasm analysis</h3><p id="sarcasmAnalysis"></p></article>
+      <article class="analysis-card"><h3>Target-group analysis</h3><p id="targetAnalysis"></p></article>
+      <article class="analysis-card"><h3>OCR text extracted</h3><div id="ocrText" class="ocr-box">No text extracted yet.</div></article>
+    </div>
+    <article class="analysis-card overall-card"><h3>Overall summary</h3><p id="overallAnalysis"></p></article>
+    <p id="modelNote" class="notice">This system provides model estimates and may make mistakes.</p>
+  </section>
+  <p class="notice">Research prototype · Predictions should be reviewed in context.</p>
+</main>
+
+<script>
+"use strict";
+
+const input = document.getElementById("memeInput");
+const analyzeBtn = document.getElementById("analyzeBtn");
+const resetBtn = document.getElementById("resetBtn");
+const statusBox = document.getElementById("status");
+const previewWrap = document.getElementById("previewWrap");
+const imagePreview = document.getElementById("imagePreview");
+const fileName = document.getElementById("fileName");
+const results = document.getElementById("results");
+
+const allowedExtensions = ["png", "jpg", "jpeg", "webp"];
+const maxBytes = 10 * 1024 * 1024;
+const SARCASM_THRESHOLD = 25; // Keep existing sarcasm display threshold.
+const TARGET_THRESHOLD = 15;  // Frontend-only target-group display threshold.
+let previewUrl = null;
+
+function setStatus(message, type = "") {
+  statusBox.textContent = message;
+  statusBox.className = type;
+}
+
+function asProbability(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const number = Number(value);
+  if (!Number.isFinite(number) || number < 0) return null;
+  return Math.min(100, Math.max(0, number <= 1 ? number * 100 : number));
+}
+
+function formatPercent(value) {
+  if (value === null || value === undefined || !Number.isFinite(value)) {
+    return "Unavailable";
+  }
+  const digits = value < 1 ? 3 : 2;
+  return value.toLocaleString("en-US", {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits
+  }) + "%";
+}
+
+function setBar(id, percentage) {
+  document.getElementById(id).style.width =
+    (percentage === null ? 0 : percentage) + "%";
+}
+
+function setBadge(id, label, className) {
+  const badge = document.getElementById(id);
+  badge.textContent = label;
+  badge.className = "pill " + className;
+}
+
+function normalizeLabel(value) {
+  return String(value ?? "").trim().toLowerCase();
+}
+
+function displayClassification(data, kind) {
+  const isHate = kind === "hate";
+  const apiLabel = String(data?.label ?? "Unavailable");
+  const percentage = asProbability(data?.probability);
+
+  const label = !isHate && percentage !== null
+    ? (percentage >= SARCASM_THRESHOLD ? "Sarcastic" : "Not sarcastic")
+    : apiLabel;
+
+  const probabilityId = isHate ? "hateProbability" : "sarcasmProbability";
+  const barId = isHate ? "hateBar" : "sarcasmBar";
+  const badgeId = isHate ? "hateBadge" : "sarcasmBadge";
+
+  document.getElementById(probabilityId).textContent = formatPercent(percentage);
+  setBar(barId, percentage);
+
+  const normalized = normalizeLabel(label);
+  let badgeClass = "pill-neutral";
+
+  if (isHate) {
+    if (normalized === "hate speech" || normalized === "hate") badgeClass = "pill-red";
+    else if (normalized === "non-hate" || normalized === "not hate") badgeClass = "pill-green";
+  } else {
+    badgeClass = percentage !== null && percentage >= SARCASM_THRESHOLD
+      ? "pill-green" : "pill-neutral";
+  }
+
+  setBadge(badgeId, label, badgeClass);
+  return { label, percentage };
+}
+
+function renderTargetChart(groups, highest) {
+  const chart = document.getElementById("targetChart");
+  chart.replaceChildren();
+
+  groups.forEach((group) => {
+    const row = document.createElement("div");
+    row.className = "chart-row";
+
+    const label = document.createElement("span");
+    label.className = "chart-label";
+    label.textContent = group.name.charAt(0).toUpperCase() + group.name.slice(1);
+
+    const track = document.createElement("div");
+    track.className = "chart-track";
+    track.setAttribute("role", "progressbar");
+    track.setAttribute("aria-label", label.textContent);
+    track.setAttribute("aria-valuemin", "0");
+    track.setAttribute("aria-valuemax", "100");
+    track.setAttribute("aria-valuenow", String(group.percentage ?? 0));
+
+    const bar = document.createElement("div");
+    bar.className = "chart-bar";
+    if (highest && group.name === highest.name) bar.classList.add("top-score");
+    track.appendChild(bar);
+
+    const value = document.createElement("span");
+    value.className = "chart-value";
+    value.textContent = formatPercent(group.percentage);
+
+    row.append(label, track, value);
+    chart.appendChild(row);
+
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      bar.style.width = (group.percentage ?? 0) + "%";
+    }));
+  });
+}
+
+function renderTargetGroups(data) {
+  const container = document.getElementById("targetGroups");
+  container.replaceChildren();
+
+  const names = ["race", "religion", "gender", "sexuality"];
+  const probabilities = data?.target_groups?.probabilities ?? {};
+  const predictedLabels = data?.target_groups?.predicted_labels ?? {};
+
+  // API values are displayed as returned. The threshold only controls UI highlighting.
+  const groups = names.map((name) => ({
+    name,
+    percentage: asProbability(probabilities[name]),
+    apiPredicted:
+      Number(predictedLabels[name]) === 1 ||
+      String(predictedLabels[name]).toLowerCase() === "true"
+  })).map((group) => ({
+    ...group,
+    predicted: group.percentage !== null &&
+      group.percentage >= TARGET_THRESHOLD
+  }));
+
+  const available = groups.filter((group) => group.percentage !== null);
+  const selectedGroups = groups.filter((group) => group.predicted);
+  const highest = available.length
+    ? available.reduce((best, group) =>
+        group.percentage > best.percentage ? group : best)
+    : null;
+
+  groups.forEach((group) => {
+    const item = document.createElement("div");
+    item.className = "target-item";
+    if (group.predicted) item.classList.add("selected");
+
+    const heading = document.createElement("div");
+    heading.className = "target-heading";
+
+    const name = document.createElement("span");
+    name.className = "target-name";
+    name.textContent = group.name.charAt(0).toUpperCase() + group.name.slice(1);
+
+    const right = document.createElement("span");
+    right.style.display = "flex";
+    right.style.alignItems = "center";
+    right.style.gap = "5px";
+
+    const score = document.createElement("span");
+    score.className = "target-score";
+    score.textContent = formatPercent(group.percentage);
+    right.appendChild(score);
+
+    if (group.predicted) {
+      const tag = document.createElement("span");
+      tag.className = "selected-tag";
+      tag.textContent = "≥ " + TARGET_THRESHOLD + "%";
+      right.appendChild(tag);
+    } else if (highest && group.name === highest.name) {
+      const tag = document.createElement("span");
+      tag.className = "pill pill-neutral";
+      tag.textContent = "Highest score";
+      right.appendChild(tag);
+    }
+
+    heading.append(name, right);
+
+    const track = document.createElement("div");
+    track.className = "progress-track";
+
+    const fill = document.createElement("div");
+    fill.className = "progress-fill target-fill";
+    fill.style.width = (group.percentage ?? 0) + "%";
+
+    track.appendChild(fill);
+    item.append(heading, track);
+    container.appendChild(item);
+  });
+
+  const summary = document.getElementById("selectionSummary");
+
+  if (selectedGroups.length) {
+    summary.textContent =
+      "Target groups meeting the frontend " + TARGET_THRESHOLD +
+      "% display threshold: " +
+      selectedGroups.map((group) =>
+        group.name.charAt(0).toUpperCase() + group.name.slice(1) +
+        " (" + formatPercent(group.percentage) + ")"
+      ).join(", ") +
+      ". This display threshold does not change the model or verify the labels.";
+  } else if (highest) {
+    summary.textContent =
+      "No target-group score reached " + TARGET_THRESHOLD +
+      "%. The highest score is " +
+      highest.name.charAt(0).toUpperCase() + highest.name.slice(1) +
+      " (" + formatPercent(highest.percentage) +
+      "). This is a model score, not a confirmed target prediction.";
+  } else {
+    summary.textContent = "Target-group probabilities were not available.";
+  }
+
+  renderTargetChart(groups, highest);
+  return { groups, selected: highest, selectedGroups };
+}
+
+function renderAnalysis(hate, sarcasm, targetResult, ocrText) {
+  document.getElementById("hateAnalysis").textContent =
+    hate.percentage === null
+      ? "The hate probability was unavailable."
+      : "The model classified this image as \"" + hate.label +
+        "\". Its reported hate probability is " + formatPercent(hate.percentage) +
+        ". This estimate alone does not establish intent or meaning.";
+
+  document.getElementById("sarcasmAnalysis").textContent =
+    sarcasm.percentage === null
+      ? "The sarcasm probability was unavailable."
+      : "Using the configured " + SARCASM_THRESHOLD +
+        "% display threshold, the result is \"" + sarcasm.label +
+        "\". The reported sarcasm probability is " +
+        formatPercent(sarcasm.percentage) +
+        ". This frontend label rule does not retrain or change the model.";
+
+  document.getElementById("targetAnalysis").textContent =
+    targetResult.selected
+      ? (targetResult.selectedGroups.length
+          ? "Target groups meeting the frontend " + TARGET_THRESHOLD +
+            "% display threshold: " +
+            targetResult.selectedGroups.map((group) =>
+              group.name.charAt(0).toUpperCase() + group.name.slice(1)
+            ).join(", ") + ". "
+          : "No target group meets the frontend " + TARGET_THRESHOLD +
+            "% display threshold. ") +
+        "Highest score: " +
+        targetResult.selected.name.charAt(0).toUpperCase() +
+        targetResult.selected.name.slice(1) + " at " +
+        formatPercent(targetResult.selected.percentage) +
+        ". This frontend rule does not change the model output or confirm the actual target."
+      : "No usable target-group probabilities were returned.";
+
+  document.getElementById("ocrText").textContent =
+    ocrText && String(ocrText).trim()
+      ? String(ocrText)
+      : "No readable text was extracted from this image.";
+
+  let summary = "The model returned a prediction for this meme. ";
+  if (hate.percentage !== null) summary += "Hate probability: " + formatPercent(hate.percentage) + ". ";
+  if (sarcasm.percentage !== null) summary += "Sarcasm probability: " + formatPercent(sarcasm.percentage) + ". ";
+  if (targetResult.selected) summary += "Highest target score: " + targetResult.selected.name + ". ";
+  summary += "Review the image and its context before drawing conclusions.";
+  document.getElementById("overallAnalysis").textContent = summary;
+}
+
+input.addEventListener("change", () => {
+  const file = input.files && input.files[0];
+  results.style.display = "none";
+
+  if (!file) {
+    analyzeBtn.disabled = true;
+    previewWrap.style.display = "none";
+    setStatus("Select a meme image to begin.");
+    return;
+  }
+
+  const extension = file.name.split(".").pop().toLowerCase();
+  if (!allowedExtensions.includes(extension)) {
+    input.value = "";
+    analyzeBtn.disabled = true;
+    previewWrap.style.display = "none";
+    setStatus("Unsupported file type. Choose PNG, JPG, JPEG, or WEBP.", "error");
+    return;
+  }
+
+  if (file.size > maxBytes) {
+    input.value = "";
+    analyzeBtn.disabled = true;
+    previewWrap.style.display = "none";
+    setStatus("The image exceeds the 10 MB upload limit.", "error");
+    return;
+  }
+
+  if (previewUrl) URL.revokeObjectURL(previewUrl);
+  previewUrl = URL.createObjectURL(file);
+  imagePreview.src = previewUrl;
+  fileName.textContent = file.name;
+  previewWrap.style.display = "block";
+  analyzeBtn.disabled = false;
+  setStatus("Image ready. Click Analyze meme.");
+});
+
+analyzeBtn.addEventListener("click", async () => {
+  const file = input.files && input.files[0];
+  if (!file) {
+    setStatus("Please select an image first.", "error");
+    return;
+  }
+
+  analyzeBtn.disabled = true;
+  analyzeBtn.textContent = "Analyzing...";
+  results.style.display = "none";
+  setStatus("Running OCR and model inference. Large models may take some time.");
+
+  try {
+    const formData = new FormData();
+    formData.append("file", file);
+
+    const response = await fetch("/api/predict", {
+      method: "POST",
+      body: formData
+    });
+
+    const text = await response.text();
+    let data;
+
+    try {
+      data = JSON.parse(text);
+    } catch {
+      throw new Error("Unexpected server response. HTTP " + response.status + ".");
+    }
+
+    if (!response.ok) {
+      throw new Error(data.detail || "Prediction failed. HTTP " + response.status + ".");
+    }
+
+    console.log("API prediction response:", data);
+
+    const hate = displayClassification(data.hate, "hate");
+    const sarcasm = displayClassification(data.sarcasm, "sarcasm");
+    const targetResult = renderTargetGroups(data);
+
+    const requestId = String(data.request_id || "");
+    document.getElementById("requestId").textContent =
+      requestId ? requestId.slice(-5) : "N/A";
+
+    renderAnalysis(hate, sarcasm, targetResult, data.ocr_text || "");
+
+    document.getElementById("modelNote").textContent =
+      data.note || "Predictions are estimates and may be affected by OCR errors.";
+
+    results.style.display = "block";
+    setStatus("Analysis completed successfully.", "success");
+    results.scrollIntoView({ behavior: "smooth", block: "start" });
+  } catch (error) {
+    console.error("Meme analysis error:", error);
+    setStatus(error instanceof Error ? error.message : "Unexpected error.", "error");
+  } finally {
+    analyzeBtn.disabled = !input.files || input.files.length === 0;
+    analyzeBtn.textContent = "Analyze meme";
+  }
+});
+
+resetBtn.addEventListener("click", () => {
+  input.value = "";
+  results.style.display = "none";
+  previewWrap.style.display = "none";
+
+  if (previewUrl) {
+    URL.revokeObjectURL(previewUrl);
+    previewUrl = null;
+  }
+
+  imagePreview.removeAttribute("src");
+  fileName.textContent = "";
+  analyzeBtn.disabled = true;
+  analyzeBtn.textContent = "Analyze meme";
+  setStatus("Select a meme image to begin.");
+});
+
+// Persistent theme toggle.
+const themeToggle = document.getElementById("themeToggle");
+const themeIcon = document.getElementById("themeIcon");
+const themeLabel = document.getElementById("themeLabel");
+
+function applyTheme(theme) {
+  const light = theme === "light";
+  document.body.classList.toggle("light-theme", light);
+  themeIcon.textContent = light ? "☾" : "☀";
+  themeLabel.textContent = light ? "Dark mode" : "Light mode";
+  themeToggle.setAttribute("aria-label", light ? "Switch to dark mode" : "Switch to light mode");
+  themeToggle.setAttribute("aria-pressed", String(light));
+  document.documentElement.style.colorScheme = light ? "light" : "dark";
+}
+
+let savedTheme = "dark";
+try {
+  const stored = localStorage.getItem("meme-dashboard-theme");
+  if (stored === "light" || stored === "dark") savedTheme = stored;
+} catch (error) {
+  console.warn("Could not load theme preference.", error);
+}
+applyTheme(savedTheme);
+
+themeToggle.addEventListener("click", () => {
+  const next = document.body.classList.contains("light-theme") ? "dark" : "light";
+  applyTheme(next);
+  try {
+    localStorage.setItem("meme-dashboard-theme", next);
+  } catch (error) {
+    console.warn("Could not save theme preference.", error);
+  }
+});
+</script>
+</body>
+</html>
